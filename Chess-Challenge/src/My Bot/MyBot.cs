@@ -10,30 +10,18 @@ public class MyBot : IChessBot
     // Piece values: null, pawn, knight, bishop, rook, queen, king
     int[] pieceValues = { 0, 100, 300, 300, 600, 900, 10000 };
 
-    const int _maxSearchDepth = 4;
+    const int _maxSearchDepth = 5;
 
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
 
-    struct MoveValue
-    {
-        public MoveValue(List<Move> moves, int eval)
-        {
-            Moves = moves;
-            Eval = eval;
-        }
-
-        public List<Move> Moves;
-        public int Eval;
-    }
+    Move _bestMoveOuterScope;
 
     public Move Think(Board board, Timer timer)
     {
-        List<Move> allMovesToDepth = SearchMovesRecursive(0, NegativeInfinity, PositiveInfinity, board, false).Moves;
+        SearchMovesRecursive(0, NegativeInfinity, PositiveInfinity, board, false);
 
-        //LogSequence(allMovesToDepth, board);
-
-        return allMovesToDepth[0];
+        return _bestMoveOuterScope;
     }
 
     public int MoveOrderCalculator(Move move, Board board)
@@ -61,18 +49,15 @@ public class MyBot : IChessBot
         return moveScoreGuess;
     }
 
-    MoveValue SearchMovesRecursive(int depth, int alpha, int beta, Board board, bool capturesOnly)
+    int SearchMovesRecursive(int depth, int alpha, int beta, Board board, bool capturesOnly)
     {
-        // Detect repetiton. Is this a good idea? probably not.
-        //if (depth != 0 && board.GameRepetitionHistory.Contains(board.ZobristKey)) return new MoveValue(new(), 0);
-
         if (depth == _maxSearchDepth) return SearchMovesRecursive(depth + 1, alpha, beta, board, true);
 
         if (capturesOnly)
         {
             int captureEval = Evaluate(board);
 
-            if (captureEval >= beta) return new MoveValue(new(), beta);
+            if (captureEval >= beta) return beta;
 
             if (captureEval > alpha) alpha = captureEval;
         }
@@ -82,60 +67,45 @@ public class MyBot : IChessBot
 
         if (movesToSearch.Length == 0)
         {
+            if (board.IsInStalemate()) return 0;
 
-            if (board.IsInStalemate()) return new MoveValue(new(), 0);
-
-            if (board.IsInCheckmate()) return new MoveValue(new(), NegativeInfinity + 1);
+            if (board.IsInCheckmate()) return NegativeInfinity + 1;
 
             // this might be slow because you evaluate the same position more than once. It will likely not leave too big of an impact
-            return new MoveValue(new(), Evaluate(board));
+            return Evaluate(board);
         }
 
         movesToSearch = RandomizeAndOrderMoves(movesToSearch, board);
 
-        int eval;
-
         Move localBestMoveSoFar = movesToSearch[0];
-
-        List<Move> localPastBestMovesSoFar = new();
 
         foreach (Move captureMove in movesToSearch)
         {
-            MoveValue moveValue;
+            int eval;
 
             board.MakeMove(captureMove);
-            if (capturesOnly)
-            {
-                moveValue = SearchMovesRecursive(depth + 1, -beta, -alpha, board, true);
-            }
-            else
-            {
-                moveValue = SearchMovesRecursive(depth + 1, -beta, -alpha, board, false);
-            }
-
+            eval = -SearchMovesRecursive(depth + 1, -beta, -alpha, board, capturesOnly);
             board.UndoMove(captureMove);
-
-            moveValue.Eval = moveValue.Eval * -1;
-            eval = moveValue.Eval;
 
             if (eval >= beta)
             {
                 // This can never be called on depth == 0
-                return new MoveValue(new(), beta);
+                return beta;
             }
 
             if (eval > alpha)
             {
                 alpha = eval;
                 localBestMoveSoFar = captureMove;
-                localPastBestMovesSoFar = moveValue.Moves;
             }
         }
 
-        List<Move> totalMovesSoFar = new() { localBestMoveSoFar };
-        totalMovesSoFar.AddRange(localPastBestMovesSoFar);
-
-        return new MoveValue(totalMovesSoFar, alpha);
+        if (depth == 0)
+        {
+            _bestMoveOuterScope = localBestMoveSoFar;
+        }
+       
+        return alpha;
     }
 
     Move[] RandomizeAndOrderMoves(Move[] allMoves, Board board)
@@ -148,40 +118,13 @@ public class MyBot : IChessBot
         return randomMove;
     }
     
-    /*
-    void LogSequence(List<Move> allBestMoves, Board board)
-    {
-        Log("-----------------START------------------");
-
-        Log("Start Eval: " + Evaluate(board));
-        Log(board.CreateDiagram());
-
-        for(int i=0; i<allBestMoves.Count; i++)
-        {
-            Move move = allBestMoves[i];
-
-            board.MakeMove(move);
-
-            Log("Depth " + i + "\n" + move + "\nEval: " + Evaluate(board));
-
-            Log(board.CreateDiagram());
-        }
-
-        for (int i= allBestMoves.Count-1; i>=0;i--)
-        {
-            Move move = allBestMoves[i];
-            board.UndoMove(move);
-        }
-    }
-    */
-    
     int Evaluate(Board board)
     {
         bool isWhite = board.IsWhiteToMove;
 
         // the score is given from the perspective of who's turn it is. Positive -> active mover has advantage
-        int whiteEval = CountMaterial(board, true) + ForceKingToCornerEndgameEval(board, true); //+ EvaluatePiecePositions(board, true);
-        int blackEval = CountMaterial(board, false) + ForceKingToCornerEndgameEval(board, false); //+ EvaluatePiecePositions(board, false);
+        int whiteEval = CountMaterial(board, true) + ForceKingToCornerEndgameEval(board, true) + EvaluatePiecePositions(board, true);
+        int blackEval = CountMaterial(board, false) + ForceKingToCornerEndgameEval(board, false) + EvaluatePiecePositions(board, false);
 
         int perspective = isWhite ? 1 : -1;
 
@@ -190,7 +133,7 @@ public class MyBot : IChessBot
         return eval * perspective;
     }
 
-    /*
+    
     int EvaluatePiecePositions(Board board, bool isWhite)
     {
         int eval = 0;
@@ -224,7 +167,7 @@ public class MyBot : IChessBot
 
         return eval;
     }
-    */
+    
 
     int ForceKingToCornerEndgameEval(Board board, bool isWhite)
     {
