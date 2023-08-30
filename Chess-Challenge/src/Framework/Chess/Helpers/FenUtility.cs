@@ -12,7 +12,6 @@ namespace ChessChallenge.Chess
         // Load position from fen string
         public static PositionInfo PositionFromFen(string fen)
         {
-
             PositionInfo loadedPositionInfo = new(fen);
             return loadedPositionInfo;
         }

@@ -3,141 +3,152 @@ using System;
 using System.Numerics;
 using System.Collections.Generic;
 using System.Linq;
+using Raylib_cs;
+using static ChessChallenge.Application.ConsoleHelper;
+using System.Diagnostics;
 
 public class MyBot : IChessBot
 {
-    // Piece values: null, pawn, knight, bishop, rook, queen, king
-    int[] pieceValues = { 0, 100, 300, 300, 600, 900, 10000 };
+    // Piece values: pawn, knight, bishop, rook, queen, king
+    int[] pieceValues = { 0, 100, 300, 300, 500, 900, 10000 };
 
-    const int _maxSearchDepth = int.MaxValue;
+    const int _maxSearchDepth = 4;
 
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
 
-    Move _bestMoveThisIteration;
     Move _bestMoveOuterScope;
-
-    bool _searchCancelled;
-
-    int _maxTimeElapsed = 1000;
-    int _currentMaxTimeElapsed;
-
-    float _timeDepletionThreshold = 0.3f;
 
     public Move Think(Board board, Timer timer)
     {
-        _searchCancelled = false;
-        _bestMoveThisIteration = Move.NullMove;
-        
-        for (int searchDepth = 1; searchDepth <= _maxSearchDepth; searchDepth++)
-        {
-            // can never run out of time
-            float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
-            _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold / 1.5f));
-
-            SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity, board, timer, false);
-
-            if (_bestMoveThisIteration != Move.NullMove) _bestMoveOuterScope = _bestMoveThisIteration;
-
-            if (_searchCancelled)
-            {
-                break;
-            }
-        }
+        Search(0, NegativeInfinity, PositiveInfinity, board);
 
         return _bestMoveOuterScope;
     }
 
-    public int MoveOrderCalculator(int depth, Move move, Board board)
+    int SearchAllCaptures(int depth, int alpha, int beta, Board board)
     {
-        // make sure we have the outerScope best move always first on depth == 0
-        int moveScoreGuess = 0;
+        int eval = Evaluate(board);
 
-        if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess = PositiveInfinity - 100;
+        if (eval >= beta)
+        {
+            return beta;
+        }
+        if (eval > alpha)
+        {
+            alpha = eval;
+        }
 
-        // capture most valuable with least valuable
-        if (move.CapturePieceType != PieceType.None) moveScoreGuess = 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+        Move[] captureMoves = board.GetLegalMoves(true);
 
-        // promote pawns
-        if (move.IsPromotion) moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
+        if (captureMoves.Length == 0)
+        {
+            return eval;
+        }
 
-        // dont move into opponent pawn area
-        if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
-        
-        return moveScoreGuess;
+        captureMoves = RandomizeAndOrderMoves(captureMoves, board);
+
+        return SearchMovesRecursive(captureMoves, depth, alpha, beta, board, true);
     }
 
-    int SearchMovesRecursive(int depth, int maxDepthThisIteration, int alpha, int beta, Board board, Timer timer, bool capturesOnly)
+    int Search(int depth, int alpha, int beta, Board board)
     {
-        if (timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+        if (depth == _maxSearchDepth) return SearchAllCaptures(depth + 1, alpha, beta, board);
 
-        if (_searchCancelled) return 0;
 
-        if (board.IsDraw()) return 0;
+        Move[] allMoves = board.GetLegalMoves();
+
+        if (board.IsInStalemate()) return 0;
 
         if (board.IsInCheckmate()) return NegativeInfinity + 1;
 
-        if (depth == maxDepthThisIteration) return SearchMovesRecursive(depth + 1, maxDepthThisIteration, alpha, beta, board, timer, true);
+        if (depth != 0 && board.GameRepetitionHistory.Contains(board.ZobristKey)) return 0;
 
-        // Get all moves
-        Move[] movesToSearch = board.GetLegalMoves(capturesOnly);
+        allMoves = RandomizeAndOrderMoves(allMoves, board);
 
-        if (capturesOnly)
+        return SearchMovesRecursive(allMoves, depth, alpha, beta, board, false);
+    }
+
+    int SearchMovesRecursive(Move[] movesToSearch, int depth, int alpha, int beta, Board board, bool capturesOnly)
+    {
+        int eval;
+
+        Move localBestMoveSoFar = movesToSearch[0];
+
+        foreach (Move captureMove in movesToSearch)
         {
-            int captureEval = Evaluate(board);
+            board.MakeMove(captureMove);
 
-            if (movesToSearch.Length == 0) return captureEval;
+            if (capturesOnly)
+            {
+                eval = -SearchAllCaptures(depth + 1, -beta, -alpha, board);
+            }
+            else
+            {
+                eval = -Search(depth + 1, -beta, -alpha, board);
+            }
 
-            if (captureEval >= beta) return beta;
+            board.UndoMove(captureMove);
 
-            if (captureEval > alpha) alpha = captureEval;
-        }
-
-        movesToSearch = RandomizeAndOrderMoves(depth, movesToSearch, board);
-
-        for (int i = 0 ; i < movesToSearch.Length; i++)
-        {
-            int eval;
-
-            board.MakeMove(movesToSearch[i]);
-            eval = -SearchMovesRecursive(depth + 1, maxDepthThisIteration, -beta, -alpha, board, timer,capturesOnly);
-            board.UndoMove(movesToSearch[i]);
-
-            if (_searchCancelled) return 0;
 
             if (eval >= beta)
             {
+                // This can never be called on depth == 0
                 return beta;
             }
 
             if (eval > alpha)
             {
                 alpha = eval;
-
-                if (depth == 0) _bestMoveThisIteration = movesToSearch[i];
+                localBestMoveSoFar = captureMove;
             }
         }
-        
+
+        if (depth == 0)
+        {
+            _bestMoveOuterScope = localBestMoveSoFar;
+        }
+
         return alpha;
     }
 
-    Move[] RandomizeAndOrderMoves(int depth, Move[] allMoves, Board board)
+    Move[] RandomizeAndOrderMoves(Move[] allMoves, Board board)
     {
         // randomize
         Random rng = new();
         Move[] randomMove = allMoves.OrderBy(e => rng.Next()).ToArray();
         // then order
-        Array.Sort(randomMove, (x, y) => Math.Sign(MoveOrderCalculator(depth, y, board) - MoveOrderCalculator(depth, x, board)));
+        Array.Sort(randomMove, (x, y) => Math.Sign(MoveOrderCalculator(y, board) - MoveOrderCalculator(x, board)));
         return randomMove;
     }
-    
+
+    public int MoveOrderCalculator(Move move, Board board)
+    {
+        int moveScoreGuess = 0;
+
+        // capture most valuable with least valuable
+        if (move.CapturePieceType != PieceType.None)
+        {
+            moveScoreGuess = 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+        }
+
+        // promote pawns
+        if (move.IsPromotion)
+        {
+            moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
+        }
+
+        // dont move into opponent pawn area
+        if (board.SquareIsAttackedByOpponent(move.TargetSquare))
+        {
+            moveScoreGuess -= pieceValues[(int)move.MovePieceType];
+        }
+
+        return moveScoreGuess;
+    }
+
     int Evaluate(Board board)
     {
-        // This is doubled. Do i need it?
-        if (board.IsInCheckmate()) return NegativeInfinity + 2;
-
-        if (board.IsDraw()) return 0;
-
         bool isWhite = board.IsWhiteToMove;
 
         // the score is given from the perspective of who's turn it is. Positive -> active mover has advantage
@@ -151,7 +162,6 @@ public class MyBot : IChessBot
         return eval * perspective;
     }
 
-    
     int EvaluatePiecePositions(Board board, bool isWhite)
     {
         int eval = 0;
@@ -185,7 +195,6 @@ public class MyBot : IChessBot
 
         return eval;
     }
-    
 
     int ForceKingToCornerEndgameEval(Board board, bool isWhite)
     {
@@ -201,7 +210,7 @@ public class MyBot : IChessBot
         float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 2800.0f);
 
         if (friendlyMaterial > enemyMaterial + pieceValues[1] * 2 && enemyEndgameWeight > 0)
-        {            
+        {
             // Move king away from centre
             Square opponentKingSquare = board.GetKingSquare(!isWhite);
 
@@ -249,3 +258,5 @@ public class MyBot : IChessBot
     }
 
 }
+
+
