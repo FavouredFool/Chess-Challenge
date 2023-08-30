@@ -1,125 +1,143 @@
 ﻿using ChessChallenge.API;
-using Raylib_cs;
 using System;
+using System.Numerics;
 using System.Collections.Generic;
 using System.Linq;
-using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
     // Piece values: null, pawn, knight, bishop, rook, queen, king
     int[] pieceValues = { 0, 100, 300, 300, 600, 900, 10000 };
 
-    const int _maxSearchDepth = 5;
+    const int _maxSearchDepth = int.MaxValue;
 
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
 
+    Move _bestMoveThisIteration;
     Move _bestMoveOuterScope;
+
+    bool _searchCancelled;
+
+    int _maxTimeElapsed = 1000;
+    int _currentMaxTimeElapsed;
+
+    float _timeDepletionThreshold = 0.3f;
 
     public Move Think(Board board, Timer timer)
     {
-        SearchMovesRecursive(0, NegativeInfinity, PositiveInfinity, board, false);
+        _searchCancelled = false;
+        _bestMoveThisIteration = Move.NullMove;
+        
+        for (int searchDepth = 1; searchDepth <= _maxSearchDepth; searchDepth++)
+        {
+            // can never run out of time
+            float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
+            _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold / 1.5f));
+
+            SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity, board, timer, false);
+
+            if (_bestMoveThisIteration != Move.NullMove) _bestMoveOuterScope = _bestMoveThisIteration;
+
+            if (_searchCancelled)
+            {
+                break;
+            }
+        }
 
         return _bestMoveOuterScope;
     }
 
-    public int MoveOrderCalculator(Move move, Board board)
+    public int MoveOrderCalculator(int depth, Move move, Board board)
     {
+        // make sure we have the outerScope best move always first on depth == 0
         int moveScoreGuess = 0;
 
+        if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess = PositiveInfinity - 100;
+
         // capture most valuable with least valuable
-        if (move.CapturePieceType != PieceType.None)
-        {
-            moveScoreGuess = 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
-        }
+        if (move.CapturePieceType != PieceType.None) moveScoreGuess = 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
 
         // promote pawns
-        if (move.IsPromotion)
-        {
-            moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
-        }
+        if (move.IsPromotion) moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
 
         // dont move into opponent pawn area
-        if (board.SquareIsAttackedByOpponent(move.TargetSquare))
-        {
-            moveScoreGuess -= pieceValues[(int)move.MovePieceType];
-        }
-
+        if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
+        
         return moveScoreGuess;
     }
 
-    int SearchMovesRecursive(int depth, int alpha, int beta, Board board, bool capturesOnly)
+    int SearchMovesRecursive(int depth, int maxDepthThisIteration, int alpha, int beta, Board board, Timer timer, bool capturesOnly)
     {
-        if (depth == _maxSearchDepth) return SearchMovesRecursive(depth + 1, alpha, beta, board, true);
+        if (timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+
+        if (_searchCancelled) return 0;
+
+        if (board.IsDraw()) return 0;
+
+        if (board.IsInCheckmate()) return NegativeInfinity + 1;
+
+        if (depth == maxDepthThisIteration) return SearchMovesRecursive(depth + 1, maxDepthThisIteration, alpha, beta, board, timer, true);
+
+        // Get all moves
+        Move[] movesToSearch = board.GetLegalMoves(capturesOnly);
 
         if (capturesOnly)
         {
             int captureEval = Evaluate(board);
+
+            if (movesToSearch.Length == 0) return captureEval;
 
             if (captureEval >= beta) return beta;
 
             if (captureEval > alpha) alpha = captureEval;
         }
 
-        // Get all moves
-        Move[] movesToSearch = board.GetLegalMoves(capturesOnly);
+        movesToSearch = RandomizeAndOrderMoves(depth, movesToSearch, board);
 
-        if (movesToSearch.Length == 0)
-        {
-            if (board.IsInStalemate()) return 0;
-
-            if (board.IsInCheckmate()) return NegativeInfinity + 1;
-
-            // this might be slow because you evaluate the same position more than once. It will likely not leave too big of an impact
-            return Evaluate(board);
-        }
-
-        movesToSearch = RandomizeAndOrderMoves(movesToSearch, board);
-
-        Move localBestMoveSoFar = movesToSearch[0];
-
-        foreach (Move captureMove in movesToSearch)
+        for (int i = 0 ; i < movesToSearch.Length; i++)
         {
             int eval;
 
-            board.MakeMove(captureMove);
-            eval = -SearchMovesRecursive(depth + 1, -beta, -alpha, board, capturesOnly);
-            board.UndoMove(captureMove);
+            board.MakeMove(movesToSearch[i]);
+            eval = -SearchMovesRecursive(depth + 1, maxDepthThisIteration, -beta, -alpha, board, timer,capturesOnly);
+            board.UndoMove(movesToSearch[i]);
+
+            if (_searchCancelled) return 0;
 
             if (eval >= beta)
             {
-                // This can never be called on depth == 0
                 return beta;
             }
 
             if (eval > alpha)
             {
                 alpha = eval;
-                localBestMoveSoFar = captureMove;
+
+                if (depth == 0) _bestMoveThisIteration = movesToSearch[i];
             }
         }
-
-        if (depth == 0)
-        {
-            _bestMoveOuterScope = localBestMoveSoFar;
-        }
-       
+        
         return alpha;
     }
 
-    Move[] RandomizeAndOrderMoves(Move[] allMoves, Board board)
+    Move[] RandomizeAndOrderMoves(int depth, Move[] allMoves, Board board)
     {
         // randomize
         Random rng = new();
         Move[] randomMove = allMoves.OrderBy(e => rng.Next()).ToArray();
         // then order
-        Array.Sort(randomMove, (x, y) => Math.Sign(MoveOrderCalculator(y, board) - MoveOrderCalculator(x, board)));
+        Array.Sort(randomMove, (x, y) => Math.Sign(MoveOrderCalculator(depth, y, board) - MoveOrderCalculator(depth, x, board)));
         return randomMove;
     }
     
     int Evaluate(Board board)
     {
+        // This is doubled. Do i need it?
+        if (board.IsInCheckmate()) return NegativeInfinity + 2;
+
+        if (board.IsDraw()) return 0;
+
         bool isWhite = board.IsWhiteToMove;
 
         // the score is given from the perspective of who's turn it is. Positive -> active mover has advantage
