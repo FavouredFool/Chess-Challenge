@@ -26,33 +26,6 @@ public class MyBot : IChessBot
         return _bestMoveOuterScope;
     }
 
-    /*
-    int SearchAllCaptures(int depth, int alpha, int beta, Board board)
-    {
-        int eval = Evaluate(board);
-
-        if (eval >= beta)
-        {
-            return beta;
-        }
-        if (eval > alpha)
-        {
-            alpha = eval;
-        }
-
-        Move[] captureMoves = board.GetLegalMoves(true);
-
-        if (captureMoves.Length == 0)
-        {
-            return eval;
-        }
-
-        captureMoves = RandomizeAndOrderMoves(captureMoves, board);
-
-        return SearchMovesRecursive(captureMoves, depth, alpha, beta, board, true);
-    }
-    */
-
     int SearchMovesRecursive(int depth, int alpha, int beta, Board board, bool capturesOnly)
     {
         if (board.IsDraw()) return 0;
