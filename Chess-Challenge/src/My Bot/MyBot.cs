@@ -15,12 +15,11 @@ public class MyBot : IChessBot
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
 
-    Move _bestMoveThisIteration;
     Move _bestMoveOuterScope;
 
     bool _searchCancelled;
 
-    int _maxTimeElapsed = 3000;
+    int _maxTimeElapsed = 1000;
     int _currentMaxTimeElapsed;
 
     float _timeDepletionThreshold = 0.3f;
@@ -28,17 +27,13 @@ public class MyBot : IChessBot
     public Move Think(Board board, Timer timer)
     {
         _searchCancelled = false;
-        _bestMoveThisIteration = Move.NullMove;
 
         for (int searchDepth = 1; searchDepth <= int.MaxValue; searchDepth++)
         {
-            // can never run out of time
             float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
             _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold / 1.5f));
 
             SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity, board, timer, false);
-
-            //if (_bestMoveThisIteration != Move.NullMove) _bestMoveOuterScope = _bestMoveThisIteration;
 
             if (_searchCancelled)
             {
@@ -75,7 +70,9 @@ public class MyBot : IChessBot
             if (captureEval > alpha) alpha = captureEval;
         }
 
-        movesToSearch = RandomizeAndOrderMoves(movesToSearch, board);
+        movesToSearch = RandomizeAndOrderMoves(depth, movesToSearch, board);
+
+        Move bestMoveLocal = Move.NullMove;
 
         for (int i = 0; i < movesToSearch.Length; i++)
         {
@@ -93,28 +90,39 @@ public class MyBot : IChessBot
             {
                 alpha = eval;
 
-                if (depth == 0) _bestMoveThisIteration = movesToSearch[i];
+                if (depth == 0) bestMoveLocal = movesToSearch[i];
             }
         }
 
-        if (depth == 0) _bestMoveOuterScope = _bestMoveThisIteration;
+        if (depth == 0) _bestMoveOuterScope = bestMoveLocal;
 
         return alpha;
     }
 
-    Move[] RandomizeAndOrderMoves(Move[] allMoves, Board board)
+    Move[] RandomizeAndOrderMoves(int depth, Move[] allMoves, Board board)
     {
         // randomize
         Random rng = new();
         Move[] randomMove = allMoves.OrderBy(e => rng.Next()).ToArray();
         // then order
-        Array.Sort(randomMove, (x, y) => Math.Sign(MoveOrderCalculator(y, board) - MoveOrderCalculator(x, board)));
+        Array.Sort(randomMove, (x, y) => Math.Sign(MoveOrderCalculator(depth, y, board) - MoveOrderCalculator(depth, x, board)));
+
+        
+        /*
+        foreach (Move move in allMoves)
+        {
+            _bestMoveOuterScope
+        }
+        */
+
         return randomMove;
     }
 
-    public int MoveOrderCalculator(Move move, Board board)
+    public int MoveOrderCalculator(int depth, Move move, Board board)
     {
         int moveScoreGuess = 0;
+
+        if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess = NegativeInfinity;
 
         // capture most valuable with least valuable
         if (move.CapturePieceType != PieceType.None)
