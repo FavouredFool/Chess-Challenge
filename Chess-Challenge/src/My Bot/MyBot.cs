@@ -21,11 +21,12 @@ public class MyBot : IChessBot
 
     public Move Think(Board board, Timer timer)
     {
-        Search(0, NegativeInfinity, PositiveInfinity, board);
+        SearchMovesRecursive(0, NegativeInfinity, PositiveInfinity, board, false);
 
         return _bestMoveOuterScope;
     }
 
+    /*
     int SearchAllCaptures(int depth, int alpha, int beta, Board board)
     {
         int eval = Evaluate(board);
@@ -50,63 +51,51 @@ public class MyBot : IChessBot
 
         return SearchMovesRecursive(captureMoves, depth, alpha, beta, board, true);
     }
+    */
 
-    int Search(int depth, int alpha, int beta, Board board)
+    int SearchMovesRecursive(int depth, int alpha, int beta, Board board, bool capturesOnly)
     {
-        if (depth == _maxSearchDepth) return SearchAllCaptures(depth + 1, alpha, beta, board);
-
-
-        Move[] allMoves = board.GetLegalMoves();
-
-        if (board.IsInStalemate()) return 0;
+        if (board.IsDraw()) return 0;
 
         if (board.IsInCheckmate()) return NegativeInfinity + 1;
 
-        if (depth != 0 && board.GameRepetitionHistory.Contains(board.ZobristKey)) return 0;
+        if (depth == _maxSearchDepth) return SearchMovesRecursive(depth + 1, alpha, beta, board, true);
 
-        allMoves = RandomizeAndOrderMoves(allMoves, board);
+        // Get all moves
+        Move[] movesToSearch = board.GetLegalMoves(capturesOnly);
 
-        return SearchMovesRecursive(allMoves, depth, alpha, beta, board, false);
-    }
-
-    int SearchMovesRecursive(Move[] movesToSearch, int depth, int alpha, int beta, Board board, bool capturesOnly)
-    {
-        int eval;
-
-        Move localBestMoveSoFar = movesToSearch[0];
-
-        foreach (Move captureMove in movesToSearch)
+        if (capturesOnly)
         {
-            board.MakeMove(captureMove);
+            int captureEval = Evaluate(board);
 
-            if (capturesOnly)
-            {
-                eval = -SearchAllCaptures(depth + 1, -beta, -alpha, board);
-            }
-            else
-            {
-                eval = -Search(depth + 1, -beta, -alpha, board);
-            }
+            if (movesToSearch.Length == 0) return captureEval;
 
-            board.UndoMove(captureMove);
+            if (captureEval >= beta) return beta;
 
+            if (captureEval > alpha) alpha = captureEval;
+        }
+
+        movesToSearch = RandomizeAndOrderMoves(movesToSearch, board);
+
+        for (int i = 0; i < movesToSearch.Length; i++)
+        {
+            int eval;
+
+            board.MakeMove(movesToSearch[i]);
+            eval = -SearchMovesRecursive(depth + 1, -beta, -alpha, board, capturesOnly);
+            board.UndoMove(movesToSearch[i]);
 
             if (eval >= beta)
             {
-                // This can never be called on depth == 0
                 return beta;
             }
 
             if (eval > alpha)
             {
                 alpha = eval;
-                localBestMoveSoFar = captureMove;
-            }
-        }
 
-        if (depth == 0)
-        {
-            _bestMoveOuterScope = localBestMoveSoFar;
+                if (depth == 0) _bestMoveOuterScope = movesToSearch[i];
+            }
         }
 
         return alpha;
