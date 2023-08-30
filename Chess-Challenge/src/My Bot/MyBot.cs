@@ -12,27 +12,54 @@ public class MyBot : IChessBot
     // Piece values: pawn, knight, bishop, rook, queen, king
     int[] pieceValues = { 0, 100, 300, 300, 500, 900, 10000 };
 
-    const int _maxSearchDepth = 4;
-
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
 
+    Move _bestMoveThisIteration;
     Move _bestMoveOuterScope;
+
+    bool _searchCancelled;
+
+    int _maxTimeElapsed = 3000;
+    int _currentMaxTimeElapsed;
+
+    float _timeDepletionThreshold = 0.3f;
 
     public Move Think(Board board, Timer timer)
     {
-        SearchMovesRecursive(0, NegativeInfinity, PositiveInfinity, board, false);
+        _searchCancelled = false;
+        _bestMoveThisIteration = Move.NullMove;
+
+        for (int searchDepth = 1; searchDepth <= int.MaxValue; searchDepth++)
+        {
+            // can never run out of time
+            float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
+            _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold / 1.5f));
+
+            SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity, board, timer, false);
+
+            //if (_bestMoveThisIteration != Move.NullMove) _bestMoveOuterScope = _bestMoveThisIteration;
+
+            if (_searchCancelled)
+            {
+                break;
+            }
+        }
 
         return _bestMoveOuterScope;
     }
 
-    int SearchMovesRecursive(int depth, int alpha, int beta, Board board, bool capturesOnly)
+    int SearchMovesRecursive(int depth, int searchDepth, int alpha, int beta, Board board, Timer timer, bool capturesOnly)
     {
+        if (timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+
+        if (_searchCancelled) return 0;
+
         if (board.IsDraw()) return 0;
 
         if (board.IsInCheckmate()) return NegativeInfinity + 1;
 
-        if (depth == _maxSearchDepth) return SearchMovesRecursive(depth + 1, alpha, beta, board, true);
+        if (depth == searchDepth) return SearchMovesRecursive(depth + 1, searchDepth, alpha, beta, board, timer, true);
 
         // Get all moves
         Move[] movesToSearch = board.GetLegalMoves(capturesOnly);
@@ -55,21 +82,22 @@ public class MyBot : IChessBot
             int eval;
 
             board.MakeMove(movesToSearch[i]);
-            eval = -SearchMovesRecursive(depth + 1, -beta, -alpha, board, capturesOnly);
+            eval = -SearchMovesRecursive(depth + 1, searchDepth, -beta, -alpha, board, timer,capturesOnly);
             board.UndoMove(movesToSearch[i]);
 
-            if (eval >= beta)
-            {
-                return beta;
-            }
+            if (_searchCancelled) return 0;
 
+            if (eval >= beta) return beta;
+            
             if (eval > alpha)
             {
                 alpha = eval;
 
-                if (depth == 0) _bestMoveOuterScope = movesToSearch[i];
+                if (depth == 0) _bestMoveThisIteration = movesToSearch[i];
             }
         }
+
+        if (depth == 0) _bestMoveOuterScope = _bestMoveThisIteration;
 
         return alpha;
     }
@@ -191,7 +219,7 @@ public class MyBot : IChessBot
             eval += 14 - dstBetweenKings;
         }
 
-        return (int)(eval * 15 * enemyEndgameWeight);
+        return (int)(eval * 25 * enemyEndgameWeight);
     }
 
     public int SquareDistanceToCenter(Square square)
