@@ -119,19 +119,21 @@ public class MyBot : IChessBot
     {
         int moveScoreGuess = 0;
 
-        if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess += NegativeInfinity;
+        if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess -= PositiveInfinity;
 
         // capture most valuable with least valuable
-        if (move.CapturePieceType != PieceType.None) moveScoreGuess += 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+        if (move.CapturePieceType != PieceType.None) moveScoreGuess -= 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
 
         // Checks are cool
-        if (move.TargetSquare == board.GetKingSquare(!board.IsWhiteToMove)) moveScoreGuess += 2;
+        if (move.TargetSquare == board.GetKingSquare(!board.IsWhiteToMove)) moveScoreGuess -= 2;
 
         // promote pawns
-        if (move.IsPromotion) moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
+        if (move.IsPromotion) moveScoreGuess -= pieceValues[(int)move.PromotionPieceType];
 
         // dont move into opponent pawn area
-        if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
+        if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess += pieceValues[(int)move.MovePieceType];
+
+        // NEGATIVE VALUES ARE BETTER, POSITIVE VALUES ARE WORSE!
 
         return moveScoreGuess;
     }
