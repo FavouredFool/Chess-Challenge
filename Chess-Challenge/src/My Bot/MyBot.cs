@@ -8,7 +8,7 @@ using static ChessChallenge.Application.ConsoleHelper;
 public class MyBot : IChessBot
 {
     // Piece values: pawn, knight, bishop, rook, queen, king
-    int[] pieceValues = { 0, 100, 300, 300, 500, 900, 10000 };
+    int[] pieceValues = { 0, 100, 300, 320, 500, 900, 10000 };
 
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
@@ -20,53 +20,53 @@ public class MyBot : IChessBot
 
     int _maxTimeElapsed = 1000;
     int _currentMaxTimeElapsed;
-    float _timeDepletionThreshold = 0.3f;
+    float _timeDepletionThreshold = 0.4f;
+
+    Board _board;
+    Timer _timer;
 
     public Move Think(Board board, Timer timer)
     {
+        _board = board;
+        _timer = timer;
+
         _searchCancelled = false;
         _bestMoveOuterScope = Move.NullMove;
 
-        for (int searchDepth = 1; searchDepth <= int.MaxValue; searchDepth++)
+        for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
             float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
-            _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold / 1.5f));
+            _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
 
-            SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity, board, timer, false);
+            SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
 
             // eval so good it's gotta be mate
-            if (_bestEvalOuterScope > PositiveInfinity - 500 || _searchCancelled)
-            {
-                Log("Final Move iteration: " + searchDepth + " " + _bestMoveOuterScope + "");
-                break;
-            }
+            if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
 
-            Log("Best Move iteration: " + searchDepth + " " +_bestMoveOuterScope + "");
+            //Log("Best Move iteration: " + searchDepth + " " +_bestMoveOuterScope + "");
         }
+
+        //Log("Final Move: " + _bestMoveOuterScope + "");
+
         return _bestMoveOuterScope;
     }
 
-    int SearchMovesRecursive(int depth, int searchDepth, int alpha, int beta, Board board, Timer timer, bool capturesOnly)
+    int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
     {
-        if (timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+        if (_timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
 
-        if (_searchCancelled) return 0;
+        if (_searchCancelled || _board.IsDraw()) return 0;
 
-        if (board.IsDraw()) return 0;
+        if (_board.IsInCheckmate()) return NegativeInfinity + 1;
 
-        if (board.IsInCheckmate())
-        {
-            return NegativeInfinity + 1;
-        }
+        if (currentDepth == iterationDepth) return SearchMovesRecursive(++currentDepth, iterationDepth, numExtensions, alpha, beta, true);
 
-        if (depth == searchDepth) return SearchMovesRecursive(depth + 1, searchDepth, alpha, beta, board, timer, true);
-
-        // Get all moves
-        Move[] movesToSearch = board.GetLegalMoves(capturesOnly);
+        Span<Move> movesToSearch = stackalloc Move[256];
+        _board.GetLegalMovesNonAlloc(ref movesToSearch, capturesOnly);
 
         if (capturesOnly)
         {
-            int captureEval = Evaluate(board);
+            int captureEval = Evaluate();
 
             if (movesToSearch.Length == 0) return captureEval;
 
@@ -75,63 +75,58 @@ public class MyBot : IChessBot
             if (captureEval > alpha) alpha = captureEval;
         }
 
-        movesToSearch = RandomizeAndOrderMoves(depth, movesToSearch, board);
-
-        Move bestMoveLocal = Move.NullMove;
-        // no reason to give it this - just need to give it anything
-        int bestEvalLocal = -1;
+        movesToSearch.Sort((x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y, _board) - MoveOrderCalculator(currentDepth, x, _board)));
 
         for (int i = 0; i < movesToSearch.Length; i++)
         {
-            int eval;
+            Move move = movesToSearch[i];
 
-            board.MakeMove(movesToSearch[i]);
-            eval = -SearchMovesRecursive(depth + 1, searchDepth, -beta, -alpha, board, timer, capturesOnly);
-            board.UndoMove(movesToSearch[i]);
+            _board.MakeMove(move);
+
+                //PieceType movedPieceType = move.MovePieceType;
+                //int targetRank = move.TargetSquare.Rank;
+
+                //bool promotingSoon = movedPieceType == PieceType.Pawn && (targetRank == 6 || targetRank == 1);
+
+                // would i rather extend by one or by two?
+                int extension = (numExtensions < 16 && _board.IsInCheck()) ? 1 : 0;
+                int eval = -SearchMovesRecursive(currentDepth + 1, iterationDepth + extension, numExtensions + extension, -beta, -alpha, capturesOnly);
+            
+            _board.UndoMove(move);
 
             if (_searchCancelled) return 0;
 
             if (eval >= beta) return beta;
 
-
             if (eval > alpha)
             {
                 alpha = eval;
-                if (depth == 0)
+
+                if (currentDepth == 0)
                 {
-                    bestMoveLocal = movesToSearch[i];
-                    bestEvalLocal = eval;
+                    _bestMoveOuterScope = movesToSearch[i];
+                    _bestEvalOuterScope = eval;
                 }
             }
         }
 
-        if (depth == 0)
-        {
-            _bestMoveOuterScope = bestMoveLocal;
-            _bestEvalOuterScope = bestEvalLocal;
-        }
-
         return alpha;
-    }
-
-    Move[] RandomizeAndOrderMoves(int depth, Move[] allMoves, Board board)
-    {
-        Array.Sort(allMoves, (x, y) => Math.Sign(MoveOrderCalculator(depth, y, board) - MoveOrderCalculator(depth, x, board)));
-
-        return allMoves;
     }
 
     public int MoveOrderCalculator(int depth, Move move, Board board)
     {
         int moveScoreGuess = 0;
 
+        // diese Umstellung ist verpflichtend -> Ohne sie funktioniert der Search nicht vernünftig.
         if (depth == 0 && move == _bestMoveOuterScope) { moveScoreGuess += PositiveInfinity; }
 
-        // capture most valuable with least valuable
-        if (move.CapturePieceType != PieceType.None) moveScoreGuess += 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+        // der Rest der Umstellungen ist optional
 
-        // Checks are cool
-        if (move.TargetSquare == board.GetKingSquare(!board.IsWhiteToMove)) moveScoreGuess += 2;
+        // capture most valuable with least valuable
+        if (move.CapturePieceType != PieceType.None) moveScoreGuess += pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+
+        // Does this move attack the square that the enemy king is on? If so -> moveScoreGuess += 2
+        // TO BE IMPLEMENTED
 
         // promote pawns
         if (move.IsPromotion) moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
@@ -139,19 +134,19 @@ public class MyBot : IChessBot
         // dont move into opponent pawn area
         if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
 
-        // POSITIVE VALUES MAKES IT COME EARLIER
+        // POSITIVE VALUES -> EARLIER SEARCH
 
         return moveScoreGuess;
     }
 
-    int Evaluate(Board board)
+    int Evaluate()
     {
-        bool isWhite = board.IsWhiteToMove;
+        bool isWhite = _board.IsWhiteToMove;
 
         // the score is given from the perspective of who's turn it is. Positive -> active mover has advantage
         // evaluate piece positions is important!
-        int whiteEval = CountMaterial(board, true) + ForceKingToCornerEndgameEval(board, true) + EvaluatePiecePositions(board, true);
-        int blackEval = CountMaterial(board, false) + ForceKingToCornerEndgameEval(board, false) + EvaluatePiecePositions(board, false);
+        int whiteEval = CountMaterial(_board, true) + ForceKingToCornerEndgameEval(_board, true) + EvaluatePiecePositions(_board, true);
+        int blackEval = CountMaterial(_board, false) + ForceKingToCornerEndgameEval(_board, false) + EvaluatePiecePositions(_board, false);
 
         int perspective = isWhite ? 1 : -1;
 
@@ -187,7 +182,7 @@ public class MyBot : IChessBot
 
         foreach (Piece center in board.GetPieceList(PieceType.Knight, isWhite).Concat(board.GetPieceList(PieceType.Bishop, isWhite)).Concat(board.GetPieceList(PieceType.Queen, isWhite)))
         {
-            eval -= SquareDistanceToCenter(center.Square) * 3;
+            eval -= SquareDistanceToCenter(center.Square) * 2;
         }
         // king needs to stay in the two files closest to home + on the edges until the endgame in which he needs to go to the centre
 
