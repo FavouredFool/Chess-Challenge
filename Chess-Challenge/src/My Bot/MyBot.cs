@@ -3,6 +3,7 @@ using System;
 using System.Numerics;
 using System.Collections.Generic;
 using System.Linq;
+using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
@@ -24,6 +25,7 @@ public class MyBot : IChessBot
     public Move Think(Board board, Timer timer)
     {
         _searchCancelled = false;
+        _bestMoveOuterScope = Move.NullMove;
 
         for (int searchDepth = 1; searchDepth <= int.MaxValue; searchDepth++)
         {
@@ -35,8 +37,11 @@ public class MyBot : IChessBot
             // eval so good it's gotta be mate
             if (_bestEvalOuterScope > PositiveInfinity - 500 || _searchCancelled)
             {
+                Log("Final Move iteration: " + searchDepth + " " + _bestMoveOuterScope + "");
                 break;
             }
+
+            Log("Best Move iteration: " + searchDepth + " " +_bestMoveOuterScope + "");
         }
         return _bestMoveOuterScope;
     }
@@ -112,6 +117,7 @@ public class MyBot : IChessBot
     Move[] RandomizeAndOrderMoves(int depth, Move[] allMoves, Board board)
     {
         Array.Sort(allMoves, (x, y) => Math.Sign(MoveOrderCalculator(depth, y, board) - MoveOrderCalculator(depth, x, board)));
+
         return allMoves;
     }
 
@@ -119,21 +125,21 @@ public class MyBot : IChessBot
     {
         int moveScoreGuess = 0;
 
-        if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess -= PositiveInfinity;
+        if (depth == 0 && move == _bestMoveOuterScope) { moveScoreGuess += PositiveInfinity; }
 
         // capture most valuable with least valuable
-        if (move.CapturePieceType != PieceType.None) moveScoreGuess -= 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+        if (move.CapturePieceType != PieceType.None) moveScoreGuess += 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
 
         // Checks are cool
-        if (move.TargetSquare == board.GetKingSquare(!board.IsWhiteToMove)) moveScoreGuess -= 2;
+        if (move.TargetSquare == board.GetKingSquare(!board.IsWhiteToMove)) moveScoreGuess += 2;
 
         // promote pawns
-        if (move.IsPromotion) moveScoreGuess -= pieceValues[(int)move.PromotionPieceType];
+        if (move.IsPromotion) moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
 
         // dont move into opponent pawn area
-        if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess += pieceValues[(int)move.MovePieceType];
+        if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
 
-        // NEGATIVE VALUES ARE BETTER, POSITIVE VALUES ARE WORSE!
+        // POSITIVE VALUES MAKES IT COME EARLIER
 
         return moveScoreGuess;
     }
