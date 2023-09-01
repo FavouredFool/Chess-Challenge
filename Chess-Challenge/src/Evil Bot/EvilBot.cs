@@ -15,6 +15,7 @@ namespace ChessChallenge.Example
     using Raylib_cs;
     using static ChessChallenge.Application.ConsoleHelper;
     using System.Diagnostics;
+    using ChessChallenge.Application;
 
     public class EvilBot : IChessBot
     {
@@ -36,8 +37,16 @@ namespace ChessChallenge.Example
         Board _board;
         Timer _timer;
 
+        int _searchCounter = 0;
+        int _millisecondsStart;
+
         public Move Think(Board board, Timer timer)
         {
+            _searchCounter = 0;
+            _millisecondsStart = timer.MillisecondsRemaining;
+
+            Log("----- EEEEEEVIL ------");
+
             _board = board;
             _timer = timer;
 
@@ -55,15 +64,21 @@ namespace ChessChallenge.Example
                 if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
 
                 //Log("Best Move iteration: " + searchDepth + " " +_bestMoveOuterScope + "");
+
+                Log("Time at which depth " + searchDepth + " has finished: " + (_millisecondsStart - _timer.MillisecondsRemaining));
             }
 
             //Log("Final Move: " + _bestMoveOuterScope + "");
+
+            Log("searches: " + _searchCounter);
 
             return _bestMoveOuterScope;
         }
 
         int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
         {
+            _searchCounter++;
+
             if (_timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
 
             if (_searchCancelled || _board.IsDraw()) return 0;
@@ -86,7 +101,9 @@ namespace ChessChallenge.Example
                 if (captureEval > alpha) alpha = captureEval;
             }
 
-            movesToSearch.Sort((x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y, _board) - MoveOrderCalculator(currentDepth, x, _board)));
+            Random rng = new();
+
+            movesToSearch.Sort((x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y, rng) - MoveOrderCalculator(currentDepth, x, rng)));
 
             for (int i = 0; i < movesToSearch.Length; i++)
             {
@@ -99,8 +116,8 @@ namespace ChessChallenge.Example
 
                 //bool promotingSoon = movedPieceType == PieceType.Pawn && (targetRank == 6 || targetRank == 1);
 
-                // EXTENDS BY 2
-                int extension = (numExtensions < 16 && _board.IsInCheck()) ? 0 : 0;
+                // would i rather extend by one or by two?
+                int extension = (numExtensions < 16 && _board.IsInCheck()) ? 1 : 0;
                 int eval = -SearchMovesRecursive(currentDepth + 1, iterationDepth + extension, numExtensions + extension, -beta, -alpha, capturesOnly);
 
                 _board.UndoMove(move);
@@ -124,8 +141,12 @@ namespace ChessChallenge.Example
             return alpha;
         }
 
-        public int MoveOrderCalculator(int depth, Move move, Board board)
+        public int MoveOrderCalculator(int depth, Move move, Random rng)
         {
+            if (depth == 0 && move == _bestMoveOuterScope) return PositiveInfinity;
+
+            return 0;
+
             int moveScoreGuess = 0;
 
             // diese Umstellung ist verpflichtend -> Ohne sie funktioniert der Search nicht vernünftig.
@@ -143,7 +164,7 @@ namespace ChessChallenge.Example
             if (move.IsPromotion) moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
 
             // dont move into opponent pawn area
-            if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
+            if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
 
             // POSITIVE VALUES -> EARLIER SEARCH
 
@@ -262,6 +283,7 @@ namespace ChessChallenge.Example
             return material;
         }
     }
+
 
 
 }

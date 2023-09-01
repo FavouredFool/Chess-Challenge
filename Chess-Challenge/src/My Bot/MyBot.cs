@@ -25,8 +25,16 @@ public class MyBot : IChessBot
     Board _board;
     Timer _timer;
 
+    int _searchCounter = 0;
+    int _millisecondsStart;
+
     public Move Think(Board board, Timer timer)
     {
+        _searchCounter = 0;
+        int _millisecondsStart = timer.MillisecondsRemaining;
+
+        Log("----- GOOOOOOOD ------");
+
         _board = board;
         _timer = timer;
 
@@ -44,15 +52,20 @@ public class MyBot : IChessBot
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
 
             //Log("Best Move iteration: " + searchDepth + " " +_bestMoveOuterScope + "");
+
+            Log("Time at which depth " + searchDepth + " has finished: " + (_millisecondsStart - _timer.MillisecondsRemaining));
         }
 
         //Log("Final Move: " + _bestMoveOuterScope + "");
+        Log("searches: " + _searchCounter);
 
         return _bestMoveOuterScope;
     }
 
     int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
     {
+        _searchCounter++;
+
         if (_timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
 
         if (_searchCancelled || _board.IsDraw()) return 0;
@@ -75,7 +88,7 @@ public class MyBot : IChessBot
             if (captureEval > alpha) alpha = captureEval;
         }
 
-        movesToSearch.Sort((x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y, _board) - MoveOrderCalculator(currentDepth, x, _board)));
+        movesToSearch.Sort((x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
 
         for (int i = 0; i < movesToSearch.Length; i++)
         {
@@ -88,7 +101,6 @@ public class MyBot : IChessBot
 
                 //bool promotingSoon = movedPieceType == PieceType.Pawn && (targetRank == 6 || targetRank == 1);
 
-                // would i rather extend by one or by two?
                 int extension = (numExtensions < 16 && _board.IsInCheck()) ? 1 : 0;
                 int eval = -SearchMovesRecursive(currentDepth + 1, iterationDepth + extension, numExtensions + extension, -beta, -alpha, capturesOnly);
             
@@ -96,7 +108,7 @@ public class MyBot : IChessBot
 
             if (_searchCancelled) return 0;
 
-            if (eval >= beta) return beta;
+            if (eval >= beta)return eval;
 
             if (eval > alpha)
             {
@@ -104,7 +116,7 @@ public class MyBot : IChessBot
 
                 if (currentDepth == 0)
                 {
-                    _bestMoveOuterScope = movesToSearch[i];
+                    _bestMoveOuterScope = move;
                     _bestEvalOuterScope = eval;
                 }
             }
@@ -113,26 +125,32 @@ public class MyBot : IChessBot
         return alpha;
     }
 
-    public int MoveOrderCalculator(int depth, Move move, Board board)
+    public int MoveOrderCalculator(int depth, Move move)
     {
         int moveScoreGuess = 0;
 
         // diese Umstellung ist verpflichtend -> Ohne sie funktioniert der Search nicht vernünftig.
-        if (depth == 0 && move == _bestMoveOuterScope) { moveScoreGuess += PositiveInfinity; }
+        if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess += PositiveInfinity;
 
         // der Rest der Umstellungen ist optional
 
-        // capture most valuable with least valuable
-        if (move.CapturePieceType != PieceType.None) moveScoreGuess += pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+        // capture most valuable with least valuable - determine if they are able to recapture afterwards
+        if (move.CapturePieceType != PieceType.None)
+        {
+            int captureMaterialDelta = pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
+
+            moveScoreGuess += (captureMaterialDelta < 0 && _board.SquareIsAttackedByOpponent(move.TargetSquare)) ? 10000 - captureMaterialDelta : 50000 + captureMaterialDelta;
+        }
+        
 
         // Does this move attack the square that the enemy king is on? If so -> moveScoreGuess += 2
         // TO BE IMPLEMENTED
 
         // promote pawns
-        if (move.IsPromotion) moveScoreGuess += pieceValues[(int)move.PromotionPieceType];
+        if (move.IsPromotion) moveScoreGuess += 30000 + pieceValues[(int)move.PromotionPieceType];
 
-        // dont move into opponent pawn area
-        if (board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess -= pieceValues[(int)move.MovePieceType];
+        // dont move into opponent attacked area. Maybe more extreme for pawns?
+        if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess +=  - 1000 - pieceValues[(int)move.MovePieceType];
 
         // POSITIVE VALUES -> EARLIER SEARCH
 
@@ -145,6 +163,8 @@ public class MyBot : IChessBot
 
         // the score is given from the perspective of who's turn it is. Positive -> active mover has advantage
         // evaluate piece positions is important!
+
+        // THESE CALCULATIONS TAKE EFFORT AND THEY LEAD TO A SHALLOWER DEPTH SEARCH. SO MAKE EM COUNT!
         int whiteEval = CountMaterial(_board, true) + ForceKingToCornerEndgameEval(_board, true) + EvaluatePiecePositions(_board, true);
         int blackEval = CountMaterial(_board, false) + ForceKingToCornerEndgameEval(_board, false) + EvaluatePiecePositions(_board, false);
 
@@ -154,7 +174,7 @@ public class MyBot : IChessBot
 
         return eval * perspective;
     }
-
+    
     int EvaluatePiecePositions(Board board, bool isWhite)
     {
         int eval = 0;
@@ -234,7 +254,7 @@ public class MyBot : IChessBot
 
         return squareDistToCentre;
     }
-
+    
     int CountMaterial(Board board, bool isWhite)
     {
         int material = 0;
