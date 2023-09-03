@@ -1,6 +1,7 @@
 ﻿using ChessChallenge.API;
 using System;
 using System.Linq;
+using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
@@ -32,6 +33,9 @@ public class MyBot : IChessBot
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
             float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
+
+            Log(percentageTimeLeft + "");
+
             _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
 
             SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
@@ -51,7 +55,7 @@ public class MyBot : IChessBot
 
     int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
     {
-        if (_timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+        if (_bestMoveOuterScope != Move.NullMove && _timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
 
         if (_searchCancelled || _board.IsDraw()) return 0;
 
