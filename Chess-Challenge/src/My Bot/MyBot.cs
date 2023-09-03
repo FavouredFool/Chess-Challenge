@@ -222,5 +222,3 @@ public class MyBot : IChessBot
         return material;
     }
 }
-
-
