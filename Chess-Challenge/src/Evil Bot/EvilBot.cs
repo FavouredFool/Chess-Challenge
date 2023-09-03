@@ -19,23 +19,26 @@ namespace ChessChallenge.Example
 
     public class EvilBot : IChessBot
     {
-        // Piece values: pawn, knight, bishop, rook, queen, king
-        int[] pieceValues = { 0, 100, 300, 320, 500, 900, 10000 };
+        private string _thanksForAllYourAwesomeWorkSeb = " <3 ";
 
         const int PositiveInfinity = 9999999;
         const int NegativeInfinity = -PositiveInfinity;
+
+        int[] _pieceValues = { 0, 100, 300, 320, 500, 900, 10000 };
 
         Move _bestMoveOuterScope;
         int _bestEvalOuterScope;
 
         bool _searchCancelled;
 
-        int _maxTimeElapsed = 200;
         int _currentMaxTimeElapsed;
+        int _maxTimeElapsed = 850;
         float _timeDepletionThreshold = 0.4f;
 
         Board _board;
         Timer _timer;
+
+        Random _random = new();
 
         public Move Think(Board board, Timer timer)
         {
@@ -48,27 +51,20 @@ namespace ChessChallenge.Example
             for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
             {
                 float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
+
                 _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
 
                 SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
 
-                // eval so good it's gotta be mate
                 if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
-
-                //Log("Best Move iteration: " + searchDepth + " " +_bestMoveOuterScope + "");
-
-                //Log("Time at which depth " + searchDepth + " has finished: " + (_millisecondsStart - _timer.MillisecondsRemaining));
             }
-
-            //Log("Final Move: " + _bestMoveOuterScope + "");
-            //Log("searches: " + _searchCounter);
 
             return _bestMoveOuterScope;
         }
 
         int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
         {
-            if (_timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+            if (_bestMoveOuterScope != Move.NullMove && _timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
 
             if (_searchCancelled || _board.IsDraw()) return 0;
 
@@ -78,8 +74,8 @@ namespace ChessChallenge.Example
 
             if (currentDepth == iterationDepth) return SearchMovesRecursive(++currentDepth, iterationDepth, numExtensions, alpha, beta, true);
 
-            Span<Move> movesToSearch = stackalloc Move[256];
-            _board.GetLegalMovesNonAlloc(ref movesToSearch, capturesOnly);
+            // no span because I dont think i can properly shuffle the span without first creating an array :c
+            Move[] movesToSearch = _board.GetLegalMoves(capturesOnly);
 
             if (capturesOnly)
             {
@@ -92,18 +88,15 @@ namespace ChessChallenge.Example
                 if (captureEval > alpha) alpha = captureEval;
             }
 
-            movesToSearch.Sort((x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
+            // Randomize so that moves with same eval are not deterministic
+            movesToSearch = movesToSearch.OrderBy(e => _random.Next()).ToArray();
+            Array.Sort(movesToSearch, (x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
 
             for (int i = 0; i < movesToSearch.Length; i++)
             {
                 Move move = movesToSearch[i];
 
                 _board.MakeMove(move);
-
-                //PieceType movedPieceType = move.MovePieceType;
-                //int targetRank = move.TargetSquare.Rank;
-
-                //bool promotingSoon = movedPieceType == PieceType.Pawn && (targetRank == 6 || targetRank == 1);
 
                 int extension = (numExtensions < 16 && _board.IsInCheck()) ? 1 : 0;
                 int eval = -SearchMovesRecursive(currentDepth + 1, iterationDepth + extension, numExtensions + extension, -beta, -alpha, capturesOnly);
@@ -133,32 +126,21 @@ namespace ChessChallenge.Example
         {
             int moveScoreGuess = 0;
 
-            // diese Umstellung ist verpflichtend -> Ohne sie funktioniert der Search nicht vernünftig.
             if (depth == 0 && move == _bestMoveOuterScope) moveScoreGuess += PositiveInfinity;
 
-            // der Rest der Umstellungen ist optional
-
-            // capture most valuable with least valuable - determine if they are able to recapture afterwards
             if (move.CapturePieceType != PieceType.None)
             {
-                int captureMaterialDelta = 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
-
+                int captureMaterialDelta = 10 * _pieceValues[(int)move.CapturePieceType] - _pieceValues[(int)move.MovePieceType];
                 moveScoreGuess += (captureMaterialDelta < 0 && _board.SquareIsAttackedByOpponent(move.TargetSquare)) ? 10000 - captureMaterialDelta : 50000 + captureMaterialDelta;
             }
 
-            // Does this move attack the square that the enemy king is on?
-            // Does this eat too much performance?
             _board.MakeMove(move);
-            if (_board.SquareIsAttackedByOpponent(_board.GetKingSquare(_board.IsWhiteToMove))) moveScoreGuess += 20000;
+            if (_board.SquareIsAttackedByOpponent(_board.GetKingSquare(_board.IsWhiteToMove))) moveScoreGuess += 5000;
             _board.UndoMove(move);
 
-            // promote pawns
-            if (move.IsPromotion) moveScoreGuess += 30000 + pieceValues[(int)move.PromotionPieceType];
+            if (move.IsPromotion) moveScoreGuess += 30000 + _pieceValues[(int)move.PromotionPieceType];
 
-            // dont move into opponent attacked area. Maybe more extreme for pawns?
-            if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess += -1000 - pieceValues[(int)move.MovePieceType];
-
-            // POSITIVE VALUES -> EARLIER SEARCH
+            if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess += -1000 - _pieceValues[(int)move.MovePieceType];
 
             return moveScoreGuess;
         }
@@ -178,42 +160,29 @@ namespace ChessChallenge.Example
             evals[0] += EvaluatePiecePositions(true);
             evals[1] += EvaluatePiecePositions(false);
 
-            int eval = evals[0] - evals[1];
-
-            return eval * (isWhite ? 1 : -1);
+            return (evals[0] - evals[1]) * (isWhite ? 1 : -1);
         }
 
         int EvaluatePiecePositions(bool isWhite)
         {
             int eval = 0;
 
-            // Pawns need to move forward (its more complicated but lets try) -- Optimization would be to change the early game
             PieceList pawns = _board.GetPieceList(PieceType.Pawn, isWhite);
 
             foreach (Piece pawn in pawns)
             {
-                // Values range from 0 to ~80
-
                 Square pawnSquare = pawn.Square;
 
                 int pawnRank = isWhite ? pawnSquare.Rank : 7 - pawnSquare.Rank;
                 int distFromMiddle = Math.Max(3 - pawnSquare.File, pawnSquare.File - 4);
 
-                // if dist from middle is higher make the importance of pawnrank lower
                 eval += pawnRank * (6 - distFromMiddle);
             }
-
-            // --- Put these three together in one calculation
-            // knights REALLY dont want to be on the outer ranks
-            // Bishops kinda wanna be more towards the middle
-            // queen doesn't want to be in the corners (too far from the centre)
 
             foreach (Piece piece in _board.GetPieceList(PieceType.Knight, isWhite).Concat(_board.GetPieceList(PieceType.Bishop, isWhite)).Concat(_board.GetPieceList(PieceType.Queen, isWhite)).Concat(_board.GetPieceList(PieceType.Rook, isWhite)))
             {
                 eval -= SquareDistanceToCenter(piece.Square) * 2;
             }
-
-            // king needs to stay in the two files closest to home + on the edges until the endgame in which he needs to go to the centre
 
             return eval;
         }
@@ -227,15 +196,12 @@ namespace ChessChallenge.Example
 
             float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 2500.0f);
 
-            if (friendlyMaterial > enemyMaterial + pieceValues[1] * 2 && enemyEndgameWeight > 0)
+            if (friendlyMaterial > enemyMaterial + _pieceValues[1] * 2 && enemyEndgameWeight > 0)
             {
-                // Move king away from centre
                 Square opponentKingSquare = _board.GetKingSquare(!isWhite);
 
-                // Range 0-4
                 eval += SquareDistanceToCenter(opponentKingSquare); ;
 
-                // move king closer to opponent king when up material
                 Square friendlyKingSquare = _board.GetKingSquare(isWhite);
 
                 int dstBetweenKingsFile = Math.Abs(friendlyKingSquare.File - opponentKingSquare.File);
@@ -266,7 +232,7 @@ namespace ChessChallenge.Example
             for (int i = 0; i < 6; i++)
             {
                 PieceList pieceList = allPieceLists[i + offset];
-                material += pieceList.Count * pieceValues[i + 1];
+                material += pieceList.Count * _pieceValues[i + 1];
             }
 
             return material;

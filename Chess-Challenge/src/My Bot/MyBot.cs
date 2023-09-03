@@ -1,11 +1,10 @@
 ﻿using ChessChallenge.API;
 using System;
 using System.Linq;
+using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
-    private string _thanksForAllYourAwesomeWorkSeb = " <3 ";
-
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
 
@@ -16,28 +15,55 @@ public class MyBot : IChessBot
 
     bool _searchCancelled;
 
-    int _currentMaxTimeElapsed;
-    int _maxTimeElapsed = 850;
-    float _timeDepletionThreshold = 0.4f;
-
     Board _board;
     Timer _timer;
 
+    /*
+     * The program (unavoidably) has a time cost
+     */
+    const int _averageMoveMakingCostMS = 16;
+    const int _estimatedMaxTotalMoves = 80;
+    const int _pufferMS = _averageMoveMakingCostMS * _estimatedMaxTotalMoves;
+    int _timeCeilingMS = 60000 - _pufferMS;
+
+    int _lastEndMS;
+    int _deltaMS;
+
+    Random _random = new Random();
+
+
     public Move Think(Board board, Timer timer)
     {
+        int startMS = timer.MillisecondsRemaining;
+        _deltaMS = _lastEndMS - startMS;
+        Log("delta: " + _deltaMS);
+
         _board = board;
         _timer = timer;
 
         _searchCancelled = false;
-        _bestMoveOuterScope = Move.NullMove;
+        Move[] moves = _board.GetLegalMoves();
+        _bestMoveOuterScope = moves[_random.Next(moves.Length)];
 
-        for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
+        _timeCeilingMS = (int)Math.Ceiling(_timeCeilingMS * 0.5);
+        Log(_timeCeilingMS + "");
+
+        while (true)
         {
-            float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
+            if (_timer.MillisecondsElapsedThisTurn > 100) break;
 
-            _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
+            //if (_timer.MillisecondsRemaining - _pufferMS <= _timeCeilingMS) break;
+        }
 
-            SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
+        //Log("End: " + _timer.MillisecondsRemaining);
+
+        _lastEndMS = _timer.MillisecondsRemaining;
+
+        return _bestMoveOuterScope;
+
+        for (int searchDepth = 0; searchDepth < int.MaxValue; searchDepth++)
+        {
+            SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity);
 
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
         }
@@ -45,9 +71,9 @@ public class MyBot : IChessBot
         return _bestMoveOuterScope;
     }
 
-    int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
+    int SearchMovesRecursive(int currentDepth, int iterationDepth, int alpha, int beta)
     {
-        if (_bestMoveOuterScope != Move.NullMove && _timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+        if (_timer.MillisecondsRemaining <= _timeCeilingMS) _searchCancelled = true;
 
         if (_searchCancelled || _board.IsDraw()) return 0;
 
@@ -55,23 +81,10 @@ public class MyBot : IChessBot
 
         if (currentDepth != 0 && _board.GameRepetitionHistory.Contains(_board.ZobristKey)) return 0;        
 
-        if (currentDepth == iterationDepth) return SearchMovesRecursive(++currentDepth, iterationDepth, numExtensions, alpha, beta, true);
+        if (currentDepth == iterationDepth) return Evaluate();
 
-        // no span because I dont think i can properly shuffle the span without first creating an array :c
-        Move[] movesToSearch = _board.GetLegalMoves(capturesOnly);
-        
-        if (capturesOnly)
-        {
-            int captureEval = Evaluate();
+        Move[] movesToSearch = _board.GetLegalMoves();
 
-            if (movesToSearch.Length == 0) return captureEval;
-
-            if (captureEval >= beta) return beta;
-
-            if (captureEval > alpha) alpha = captureEval;
-        }
-
-        // Randomize so that moves with same eval are not deterministic
         Random rng = new();
         movesToSearch = movesToSearch.OrderBy(e => rng.Next()).ToArray();
         Array.Sort(movesToSearch, (x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
@@ -82,8 +95,7 @@ public class MyBot : IChessBot
 
             _board.MakeMove(move);
 
-                int extension = (numExtensions < 16 && _board.IsInCheck()) ? 1 : 0;
-                int eval = -SearchMovesRecursive(currentDepth + 1, iterationDepth + extension, numExtensions + extension, -beta, -alpha, capturesOnly);
+                int eval = -SearchMovesRecursive(currentDepth + 1, iterationDepth, -beta, -alpha);
             
             _board.UndoMove(move);
 
