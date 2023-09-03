@@ -5,6 +5,39 @@ using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
+    /*
+     * ----- A small rundown of how the "Supertask Time Troubles" Bot works -----
+     * 
+     * -- What is a Supertask? --
+     * When we talk about a "Supertask", we mean a sequence of countably infinite operations "squeezed" into a finite frame.
+     * 
+     * An example:
+     * A marathon runner is really close to finishing her race but she's also reaaaally groggy. She is two meters away from the finish line, but due to her exhaustion every step that she takes is half as far as her last one.
+     * Her first step is a strong 1 meters far. The following only 0.5 meters. The one after that 0.25 meters etcetera etcetera.
+     * After how many steps will she reach the goal? Because this is all very philosophical, we need to understand that our marathon runner is actually just a line, or a point - she has no width that would trigger the finish line by proximity.
+     * She should reach the goal after an infinite amount of steps, right? But damn, dat's alotta steps.
+     * 
+     * 
+     * -- What do the bot do? --
+     * The bot has *terrible* time-management-skills.
+     * It treats its time like a Supertask in that it always takes half its remaining time for its turn.
+     * This might not seem like a smart strategy (it aint), but I can assure you that the bot will use the first 30 seconds to calculate a *banger* opening move.
+     * 
+     * I *tried* to make it as competitive as possible. It's hyper-aggressive, so it can use the first moves that still search a few iterations deep to make some impact on the board.
+     * It's especially entertaining to see it play against itself. If you have the patience to wait through their respective first moves, the way they ramp up their speed is quite satisfying to watch.
+     * 
+     * The bot calculates in time increments when they are not zero, making the bot significantly better at chess but also kind of beating the whole Supertask point.
+     * 
+     * 
+     * -- What are its limitations? --
+     * There is an unavoidable time-cost between the time measured at the end of a turn and the time measured at the start of the next turn.
+     * I calculated this delta cost (_averageDeltaCostBetweenTurnsMS) to be around 16ms on my machine, which is unfortunately quite a lot.
+     * To combat this, I included a puffer (_pufferMS) for 80 turns (_estimatedMaxTotalMoves) which decreases every turn and should help to remove the delta-cost from the equasion.
+     * 
+     * Additionally, computers are not cool enough to be infinitely fast (smh), which is why even without this puffer, we'd *potentially* hit some time constraints.
+     * To keep up, the bot will end up playing bollocks moves at random. That should be enough to cover the 60 rounds. Any more than 60 and the puffer will be our bots detriment anyway.
+     */
+
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
 
@@ -18,26 +51,19 @@ public class MyBot : IChessBot
     Board _board;
     Timer _timer;
 
-    /*
-     * The program (unavoidably) has a time cost
-     */
-    const int _averageMoveMakingCostMS = 16;
+    // While I measured a delta-cost of 16ms (see comment above), I'ma double it (and give it to the next person) so more computers can keep up.
+    const int _averageDeltaCostBetweenTurnsMS = 32;
     const int _estimatedMaxTotalMoves = 80;
-    const int _pufferMS = _averageMoveMakingCostMS * _estimatedMaxTotalMoves;
-    int _timeCeilingMS = 60000 - _pufferMS;
 
-    int _lastEndMS;
-    int _deltaMS;
+    int _timeCeilingMS;
+    int _pufferMS;
+    int _turnCounter = 0;
 
     Random _random = new Random();
 
-
     public Move Think(Board board, Timer timer)
     {
-        int startMS = timer.MillisecondsRemaining;
-        _deltaMS = _lastEndMS - startMS;
-        Log("delta: " + _deltaMS);
-
+        Log("--start--");
         _board = board;
         _timer = timer;
 
@@ -45,35 +71,28 @@ public class MyBot : IChessBot
         Move[] moves = _board.GetLegalMoves();
         _bestMoveOuterScope = moves[_random.Next(moves.Length)];
 
-        _timeCeilingMS = (int)Math.Ceiling(_timeCeilingMS * 0.5);
-        Log(_timeCeilingMS + "");
+        _timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
+        _pufferMS = (_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS * 2;
 
-        while (true)
-        {
-            if (_timer.MillisecondsElapsedThisTurn > 100) break;
+        Log("TimeCeil: " + _timeCeilingMS);
 
-            //if (_timer.MillisecondsRemaining - _pufferMS <= _timeCeilingMS) break;
-        }
-
-        //Log("End: " + _timer.MillisecondsRemaining);
-
-        _lastEndMS = _timer.MillisecondsRemaining;
-
-        return _bestMoveOuterScope;
+        // TODO: For some reason the depth falls from 5 to 0 instantly for both bots which doesnt make too much sense
 
         for (int searchDepth = 0; searchDepth < int.MaxValue; searchDepth++)
         {
             SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity);
+            Log("finished: " + searchDepth);
 
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
         }
 
+        _turnCounter++;
         return _bestMoveOuterScope;
     }
 
     int SearchMovesRecursive(int currentDepth, int iterationDepth, int alpha, int beta)
     {
-        if (_timer.MillisecondsRemaining <= _timeCeilingMS) _searchCancelled = true;
+        if (_timer.MillisecondsRemaining - _pufferMS <= _timeCeilingMS) _searchCancelled = true;
 
         if (_searchCancelled || _board.IsDraw()) return 0;
 
