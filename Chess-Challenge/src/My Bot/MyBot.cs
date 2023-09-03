@@ -1,22 +1,23 @@
 ﻿using ChessChallenge.API;
 using System;
 using System.Linq;
-using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
-    int[] pieceValues = { 0, 100, 300, 320, 500, 900, 10000 };
+    private string _thanksForAllYourAwesomeWorkSeb = " <3 ";
 
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
+
+    int[] _pieceValues = { 0, 100, 300, 320, 500, 900, 10000 };
 
     Move _bestMoveOuterScope;
     int _bestEvalOuterScope;
 
     bool _searchCancelled;
 
-    int _maxTimeElapsed = 200;
     int _currentMaxTimeElapsed;
+    int _maxTimeElapsed = 850;
     float _timeDepletionThreshold = 0.4f;
 
     Board _board;
@@ -34,21 +35,12 @@ public class MyBot : IChessBot
         {
             float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
 
-            Log(percentageTimeLeft + "");
-
             _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
 
             SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
 
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
-
-            //Log("Best Move iteration: " + searchDepth + " " +_bestMoveOuterScope + "");
-
-            //Log("Time at which depth " + searchDepth + " has finished: " + (_millisecondsStart - _timer.MillisecondsRemaining));
         }
-
-        //Log("Final Move: " + _bestMoveOuterScope + "");
-        //Log("searches: " + _searchCounter);
 
         return _bestMoveOuterScope;
     }
@@ -65,9 +57,9 @@ public class MyBot : IChessBot
 
         if (currentDepth == iterationDepth) return SearchMovesRecursive(++currentDepth, iterationDepth, numExtensions, alpha, beta, true);
 
-        Span<Move> movesToSearch = stackalloc Move[256];
-        _board.GetLegalMovesNonAlloc(ref movesToSearch, capturesOnly);
-
+        // no span because I dont think i can properly shuffle the span without first creating an array :c
+        Move[] movesToSearch = _board.GetLegalMoves(capturesOnly);
+        
         if (capturesOnly)
         {
             int captureEval = Evaluate();
@@ -79,7 +71,10 @@ public class MyBot : IChessBot
             if (captureEval > alpha) alpha = captureEval;
         }
 
-        movesToSearch.Sort((x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
+        // Randomize so that moves with same eval are not deterministic
+        Random rng = new();
+        movesToSearch = movesToSearch.OrderBy(e => rng.Next()).ToArray();
+        Array.Sort(movesToSearch, (x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
 
         for (int i = 0; i < movesToSearch.Length; i++)
         {
@@ -119,8 +114,7 @@ public class MyBot : IChessBot
 
         if (move.CapturePieceType != PieceType.None)
         {
-            int captureMaterialDelta = 10 * pieceValues[(int)move.CapturePieceType] - pieceValues[(int)move.MovePieceType];
-
+            int captureMaterialDelta = 10 * _pieceValues[(int)move.CapturePieceType] - _pieceValues[(int)move.MovePieceType];
             moveScoreGuess += (captureMaterialDelta < 0 && _board.SquareIsAttackedByOpponent(move.TargetSquare)) ? 10000 - captureMaterialDelta : 50000 + captureMaterialDelta;
         }
 
@@ -128,9 +122,9 @@ public class MyBot : IChessBot
         if (_board.SquareIsAttackedByOpponent(_board.GetKingSquare(_board.IsWhiteToMove))) moveScoreGuess += 5000;
         _board.UndoMove(move);
 
-        if (move.IsPromotion) moveScoreGuess += 30000 + pieceValues[(int)move.PromotionPieceType];
+        if (move.IsPromotion) moveScoreGuess += 30000 + _pieceValues[(int)move.PromotionPieceType];
 
-        if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess +=  - 1000 - pieceValues[(int)move.MovePieceType];
+        if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess +=  - 1000 - _pieceValues[(int)move.MovePieceType];
 
         return moveScoreGuess;
     }
@@ -150,9 +144,7 @@ public class MyBot : IChessBot
         evals[0] += EvaluatePiecePositions(true);
         evals[1] += EvaluatePiecePositions(false);
 
-        int eval = evals[0] - evals[1];
-
-        return eval * (isWhite ? 1 : -1);
+        return (evals[0] - evals[1]) * (isWhite ? 1 : -1);
     }
     
     int EvaluatePiecePositions(bool isWhite)
@@ -188,7 +180,7 @@ public class MyBot : IChessBot
 
         float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 2500.0f);
 
-        if (friendlyMaterial > enemyMaterial + pieceValues[1] * 2 && enemyEndgameWeight > 0)
+        if (friendlyMaterial > enemyMaterial + _pieceValues[1] * 2 && enemyEndgameWeight > 0)
         {
             Square opponentKingSquare = _board.GetKingSquare(!isWhite);
 
@@ -224,7 +216,7 @@ public class MyBot : IChessBot
         for (int i = 0; i < 6; i++)
         {
             PieceList pieceList = allPieceLists[i + offset];
-            material += pieceList.Count * pieceValues[i + 1];
+            material += pieceList.Count * _pieceValues[i + 1];
         }
 
         return material;
