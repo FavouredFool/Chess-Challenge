@@ -1,6 +1,7 @@
 ﻿using ChessChallenge.API;
 using System;
 using System.Linq;
+using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
@@ -16,6 +17,7 @@ public class MyBot : IChessBot
      * After how many steps will she reach the goal? Because this is all very philosophical, we need to understand that our marathon runner is actually just a line, or a point - she has no width that would trigger the finish line by proximity.
      * She should reach the goal after an infinite amount of steps, right? But damn, dat's alotta steps.
      * 
+     * Vsauce has a great video about this: https://www.youtube.com/watch?v=ffUnNaQTfZE
      * 
      * -- What do the bot do? --
      * The bot has *terrible* time-management-skills.
@@ -49,7 +51,7 @@ public class MyBot : IChessBot
     Timer _timer;
 
     // While I measured a delta-cost of 16ms (see comment above), I'ma double it (and give it to the next person) so weaker computers can still keep up (as I am not sure about the origin of the delta-cost).
-    const int _averageDeltaCostBetweenTurnsMS = 16*2;
+    const int _averageDeltaCostBetweenTurnsMS = 16*2 * 0;
     const int _estimatedMaxTotalMoves = 64;
 
     int _timeCeilingMS;
@@ -68,7 +70,8 @@ public class MyBot : IChessBot
         _bestEvalOuterScope = NegativeInfinity;
         _bestMoveOuterScope = moves[_random.Next(moves.Length)];
 
-        _timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
+        //_timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
+        _timeCeilingMS = _timer.MillisecondsRemaining - 256;
         _pufferMS = Math.Max((_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS, 0);
 
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
@@ -112,7 +115,7 @@ public class MyBot : IChessBot
             if (captureEval > alpha) alpha = captureEval;
         }
 
-        // Shuffle so that moves with same eval are not deterministic
+        // Shuffle so that moves with same eval are not deterministic -> This might be completely useless if the eval is precise. How do i shuffle then? -> threshold for how much higher a new eval needs to be than the active alpha in search?
         movesToSearch = movesToSearch.OrderBy(e => _random.Next()).ToArray();
         Array.Sort(movesToSearch, (x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
 
@@ -177,11 +180,14 @@ public class MyBot : IChessBot
 
         int[] evals = new[] { 0, 0 };
 
+        int friendlyMaterialIndex = isWhite ? 0 : 1;
+        int enemyMaterialIndex = (friendlyMaterialIndex + 1) % 2;
+
         evals[0] += CountMaterial(true);
         evals[1] += CountMaterial(false);
 
-        evals[0] += ForceKingToCornerEndgameEval(evals[0], evals[1], true);
-        evals[1] += ForceKingToCornerEndgameEval(evals[1], evals[0], false);
+        evals[0] += ForceKingToCornerEndgame(evals[enemyMaterialIndex], evals[friendlyMaterialIndex], true);
+        evals[1] += ForceKingToCornerEndgame(evals[friendlyMaterialIndex], evals[enemyMaterialIndex], false);
 
         evals[0] += EvaluatePiecePositions(true);
         evals[1] += EvaluatePiecePositions(false);
@@ -207,28 +213,32 @@ public class MyBot : IChessBot
 
         foreach (Piece piece in _board.GetPieceList(PieceType.Knight, isWhite).Concat(_board.GetPieceList(PieceType.Bishop, isWhite)).Concat(_board.GetPieceList(PieceType.Queen, isWhite)).Concat(_board.GetPieceList(PieceType.Rook, isWhite)))
         {
-            eval -= SquareDistanceToCenter(piece.Square) * 2;
+            eval -= DistanceInSquaresToCenter(piece.Square) * 2;
         }
 
         return eval;
     }
 
-    int ForceKingToCornerEndgameEval(int whiteMaterial, int blackMaterial, bool isWhite)
+    int ForceKingToCornerEndgame(int enemyMaterial, int friendlyMaterial, bool isWhite)
     {
         int eval = 0;
 
-        int enemyMaterial = isWhite ? blackMaterial : whiteMaterial;
-        int friendlyMaterial = isWhite ? whiteMaterial : blackMaterial;
+        // Endgame starts very early (it still fades in) -> chess comes out early and hyperaggressive.
+        //0-1 -> more the fewer material the enemy has
+        float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 3000);
 
-        float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 2500.0f);
+        //0-1 -> more the more material the enemy has than me
+        float disadvantageReduction = 1 - Math.Min(1, (friendlyMaterial-10000) / ((float)(enemyMaterial-10000)));
 
-        if (friendlyMaterial > enemyMaterial + _pieceValues[1] * 2 && enemyEndgameWeight > 0)
+        enemyEndgameWeight *= disadvantageReduction;
+
+        if (enemyEndgameWeight > 0)
         {
             Square opponentKingSquare = _board.GetKingSquare(!isWhite);
-
-            eval += SquareDistanceToCenter(opponentKingSquare); ;
-
             Square friendlyKingSquare = _board.GetKingSquare(isWhite);
+
+            //0-7?
+            eval += DistanceInSquaresToCenter(opponentKingSquare);
 
             int dstBetweenKingsFile = Math.Abs(friendlyKingSquare.File - opponentKingSquare.File);
             int dstBetweenKingsRank = Math.Abs(friendlyKingSquare.Rank - opponentKingSquare.Rank);
@@ -240,7 +250,7 @@ public class MyBot : IChessBot
         return (int)(eval * 20 * enemyEndgameWeight);
     }
 
-    public int SquareDistanceToCenter(Square square)
+    public int DistanceInSquaresToCenter(Square square)
     {
         int squareDistToCenterFile = Math.Max(3 - square.File, square.File - 4);
         int squareDistToCenterRank = Math.Max(3 - square.Rank, square.Rank - 4);
@@ -252,12 +262,11 @@ public class MyBot : IChessBot
     int CountMaterial(bool isWhite)
     {
         int material = 0;
-        int offset = isWhite ? 0 : 6;
 
         PieceList[] allPieceLists = _board.GetAllPieceLists();
         for (int i = 0; i < 6; i++)
         {
-            PieceList pieceList = allPieceLists[i + offset];
+            PieceList pieceList = allPieceLists[i + (isWhite ? 0 : 6)];
             material += pieceList.Count * _pieceValues[i + 1];
         }
 
