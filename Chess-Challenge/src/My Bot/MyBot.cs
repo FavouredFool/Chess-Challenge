@@ -1,7 +1,6 @@
 ﻿using ChessChallenge.API;
 using System;
 using System.Linq;
-using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
@@ -50,7 +49,7 @@ public class MyBot : IChessBot
     Timer _timer;
 
     // While I measured a delta-cost of 16ms (see comment above), I'ma double it (and give it to the next person) so weaker computers can still keep up (as I am not sure about the origin of the delta-cost).
-    const int _averageDeltaCostBetweenTurnsMS = 16 * 2;
+    const int _averageDeltaCostBetweenTurnsMS = 16*2;
     const int _estimatedMaxTotalMoves = 64;
 
     int _timeCeilingMS;
@@ -61,8 +60,6 @@ public class MyBot : IChessBot
 
     public Move Think(Board board, Timer timer)
     {
-        string isWhite = board.IsWhiteToMove ? "White" : "Black";
-        Log("\n--start with: " + isWhite + "--");
         _board = board;
         _timer = timer;
 
@@ -74,13 +71,9 @@ public class MyBot : IChessBot
         _timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
         _pufferMS = Math.Max((_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS, 0);
 
-        Log("Counter: " + _turnCounter + " Puffer: " + _pufferMS + "\n");
-
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
             SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
-            //Log("depth: " + searchDepth + " Eval: " + _bestEvalOuterScope);
-            //Log("Time Remaining: " + ((_timer.MillisecondsRemaining - _pufferMS) - _timeCeilingMS));
 
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
         }
@@ -165,9 +158,11 @@ public class MyBot : IChessBot
             moveScoreGuess += (captureMaterialDelta < 0 && _board.SquareIsAttackedByOpponent(move.TargetSquare)) ? 10000 - captureMaterialDelta : 50000 + captureMaterialDelta;
         }
 
+        /*
         _board.MakeMove(move);
         if (_board.SquareIsAttackedByOpponent(_board.GetKingSquare(_board.IsWhiteToMove))) moveScoreGuess += 5000;
         _board.UndoMove(move);
+        */
 
         if (move.IsPromotion) moveScoreGuess += 30000 + _pieceValues[(int)move.PromotionPieceType];
 
