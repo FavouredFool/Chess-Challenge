@@ -52,7 +52,7 @@ public class MyBot : IChessBot
     Timer _timer;
 
     // While I measured a delta-cost of 16ms (see comment above), I'ma double it (and give it to the next person) so more computers can keep up.
-    const int _averageDeltaCostBetweenTurnsMS = 32;
+    const int _averageDeltaCostBetweenTurnsMS = 16;
     const int _estimatedMaxTotalMoves = 80;
 
     int _timeCeilingMS;
@@ -63,7 +63,8 @@ public class MyBot : IChessBot
 
     public Move Think(Board board, Timer timer)
     {
-        Log("--start--");
+        string isWhite = board.IsWhiteToMove ? "White" : "Black";
+        Log("--start with: " + isWhite + "--");
         _board = board;
         _timer = timer;
 
@@ -72,17 +73,20 @@ public class MyBot : IChessBot
         _bestMoveOuterScope = moves[_random.Next(moves.Length)];
 
         _timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
-        _pufferMS = (_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS * 2;
+        _pufferMS = (_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS;
 
         Log("TimeCeil: " + _timeCeilingMS);
+        Log("Turn: " + _turnCounter);
 
         // TODO: For some reason the depth falls from 5 to 0 instantly for both bots which doesnt make too much sense
 
         for (int searchDepth = 0; searchDepth < int.MaxValue; searchDepth++)
         {
             SearchMovesRecursive(0, searchDepth, NegativeInfinity, PositiveInfinity);
-            Log("finished: " + searchDepth);
-
+            Log("finished: " + searchDepth + " searchCancelled: " + _searchCancelled);
+            Log("Time Remaining: " + _timer.MillisecondsRemaining);
+            Log("Puffer: " + _pufferMS);
+            Log("Eval: " + _bestEvalOuterScope);
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
         }
 
