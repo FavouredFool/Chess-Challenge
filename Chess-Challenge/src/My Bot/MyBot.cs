@@ -1,6 +1,7 @@
 ﻿using ChessChallenge.API;
 using System;
 using System.Linq;
+using System.Xml.Schema;
 using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
@@ -41,6 +42,7 @@ public class MyBot : IChessBot
     const int NegativeInfinity = -PositiveInfinity;
 
     int[] _pieceValues = { 0, 100, 300, 320, 500, 900, 10000 };
+    int[] _passedPawnBonuses = { 25, 25, 40, 65, 105, 150, 0 };
 
     Move _bestMoveOuterScope;
     int _bestEvalOuterScope;
@@ -54,6 +56,9 @@ public class MyBot : IChessBot
     const int _averageDeltaCostBetweenTurnsMS = 16*2 * 0;
     const int _estimatedMaxTotalMoves = 64;
 
+    // The found move needs to be better than alpha + _evalJitter. Without this, the bot would move quite deterministic. This way the moves get shuffled and the move that gets picked first has a higher chance of staying.
+    const int _evalJitter = 25;
+
     int _timeCeilingMS;
     int _pufferMS;
     int _turnCounter = 0;
@@ -62,7 +67,7 @@ public class MyBot : IChessBot
 
     public Move Think(Board board, Timer timer)
     {
-        Log(" ");
+        Log("Turn: " + _turnCounter);
         _board = board;
         _timer = timer;
 
@@ -84,10 +89,11 @@ public class MyBot : IChessBot
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
         }
 
-        // technically i need to include some waiting here to make sure no bot is quicker when it finds mate early. It's a technicality but i live for technicalities.
+        // I need to include some waiting here to make sure no turn is ended early when the bot finds mate early.
 
         while (_timer.MillisecondsRemaining - _pufferMS > _timeCeilingMS){ /* exist */ }
 
+        
         _turnCounter++;
         return _bestMoveOuterScope;
     }
@@ -137,7 +143,7 @@ public class MyBot : IChessBot
 
             if (eval >= beta) return eval;
 
-            if (eval > alpha)
+            if (eval >= alpha + _evalJitter)
             {
                 alpha = eval;
 
@@ -194,39 +200,47 @@ public class MyBot : IChessBot
         evals[0] += ForceKingToCornerEndgame(enemyEndgameWeight, true);
         evals[1] += ForceKingToCornerEndgame(enemyEndgameWeight, false);
 
-        //evals[0] += EvaluatePiecePositions(true);
-        //evals[1] += EvaluatePiecePositions(false);
+        evals[0] += EvaluatePiecePositions(enemyEndgameWeight, true);
+        evals[1] += EvaluatePiecePositions(enemyEndgameWeight, false);
 
         // First part of the equasion is always relative between black and white. There is not "absolute drift"
-        // Second part of the equasion introduces an absolute drift towards the endgame
-        int eval = evals[0] - evals[1] + (int)(0 * enemyEndgameWeight);
+        // Second part of the equasion introduces an absolute drift towards the endgame so the 64 moves are not exceeded
 
-        return eval * (isWhite ? 1 : -1);
+        return (evals[friendlyMaterialIndex] - evals[enemyMaterialIndex]) + (int)(enemyEndgameWeight * _turnCounter * 32);
     }
-
-    int EvaluatePiecePositions(bool isWhite)
+    
+    int EvaluatePiecePositions(float endgameWeight, bool isWhite)
     {
         int eval = 0;
 
-        PieceList pawns = _board.GetPieceList(PieceType.Pawn, isWhite);
-
-        foreach (Piece pawn in pawns)
+        // push all pieces into the enemy as fast as possible!
+        PieceList[] pieceLists = _board.GetAllPieceLists();
+        for (int i = 0; i < 6; i++)
         {
-            Square pawnSquare = pawn.Square;
+            foreach (Piece piece in pieceLists[i + (isWhite ? 0 : 6)])
+            {
+                if (piece.IsKing)
+                {
+                    // dont move the king forward to prevent early unfortunate mates
+                    continue;
+                }
 
-            int pawnRank = isWhite ? pawnSquare.Rank : 7 - pawnSquare.Rank;
-            int distFromMiddle = Math.Max(3 - pawnSquare.File, pawnSquare.File - 4);
+                Square square = piece.Square;
+                int rank = isWhite ? square.Rank : 7 - square.Rank;
+                int distFromMiddle = Math.Max(3 - square.File, square.File - 4);
 
-            eval += pawnRank * (6 - distFromMiddle);
+                if (piece.IsPawn)
+                {
+                    eval += _passedPawnBonuses[rank];
+                }
+                
+                eval += (int)(rank * (8 - distFromMiddle) * 0.5);
+            }
         }
 
-        foreach (Piece piece in _board.GetPieceList(PieceType.Knight, isWhite).Concat(_board.GetPieceList(PieceType.Bishop, isWhite)).Concat(_board.GetPieceList(PieceType.Queen, isWhite)).Concat(_board.GetPieceList(PieceType.Rook, isWhite)))
-        {
-            eval -= DistanceInSquaresToCenter(piece.Square) * 2;
-        }
-
-        return eval;
+        return eval * (1-(int)(endgameWeight));
     }
+    
 
     int ForceKingToCornerEndgame(float enemyEndgameWeight, bool isWhite)
     {
@@ -237,13 +251,13 @@ public class MyBot : IChessBot
             Square opponentKingSquare = _board.GetKingSquare(!isWhite);
             Square friendlyKingSquare = _board.GetKingSquare(isWhite);
 
-            eval += DistanceInSquaresToCenter(opponentKingSquare) * 20;
+            int distToCentre = DistanceInSquaresToCenter(opponentKingSquare) * 10;
 
             int dstBetweenKingsFile = Math.Abs(friendlyKingSquare.File - opponentKingSquare.File);
             int dstBetweenKingsRank = Math.Abs(friendlyKingSquare.Rank - opponentKingSquare.Rank);
             int dstBetweenKings = dstBetweenKingsFile + dstBetweenKingsRank;
-
-            eval += (14 - dstBetweenKings) * 20;
+            
+            eval += distToCentre * 10 + (14 - dstBetweenKings) * 4;
         }
 
         return (int)(eval * enemyEndgameWeight);
