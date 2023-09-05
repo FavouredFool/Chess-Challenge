@@ -62,6 +62,7 @@ public class MyBot : IChessBot
 
     public Move Think(Board board, Timer timer)
     {
+        Log(" ");
         _board = board;
         _timer = timer;
 
@@ -71,12 +72,14 @@ public class MyBot : IChessBot
         _bestMoveOuterScope = moves[_random.Next(moves.Length)];
 
         //_timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
-        _timeCeilingMS = _timer.MillisecondsRemaining - 256;
+        _timeCeilingMS = _timer.MillisecondsRemaining - 64;
         _pufferMS = Math.Max((_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS, 0);
 
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
             SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
+
+            Log("Depth: " + searchDepth + " Eval: " + _bestEvalOuterScope);
 
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
         }
@@ -161,12 +164,6 @@ public class MyBot : IChessBot
             moveScoreGuess += (captureMaterialDelta < 0 && _board.SquareIsAttackedByOpponent(move.TargetSquare)) ? 10000 - captureMaterialDelta : 50000 + captureMaterialDelta;
         }
 
-        /*
-        _board.MakeMove(move);
-        if (_board.SquareIsAttackedByOpponent(_board.GetKingSquare(_board.IsWhiteToMove))) moveScoreGuess += 5000;
-        _board.UndoMove(move);
-        */
-
         if (move.IsPromotion) moveScoreGuess += 30000 + _pieceValues[(int)move.PromotionPieceType];
 
         if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess += -1000 - _pieceValues[(int)move.MovePieceType];
@@ -186,13 +183,25 @@ public class MyBot : IChessBot
         evals[0] += CountMaterial(true);
         evals[1] += CountMaterial(false);
 
-        evals[0] += ForceKingToCornerEndgame(evals[enemyMaterialIndex], evals[friendlyMaterialIndex], true);
-        evals[1] += ForceKingToCornerEndgame(evals[friendlyMaterialIndex], evals[enemyMaterialIndex], false);
+        // Endgame starts very early (it still fades in) -> king comes out early and hyperaggressive.
+        //0-1 -> more the fewer material the enemy has
+        float enemyEndgameWeight = 1 - Math.Min(1, (evals[enemyMaterialIndex] - 10000) / 3000f);
+        //0-1 -> more the more material the enemy has than me
+        float disadvantageReduction = Math.Min(1, (evals[friendlyMaterialIndex] - 10000) / ((float)(evals[enemyMaterialIndex] - 10000)));
 
-        evals[0] += EvaluatePiecePositions(true);
-        evals[1] += EvaluatePiecePositions(false);
+        enemyEndgameWeight *= disadvantageReduction;
 
-        return (evals[0] - evals[1]) * (isWhite ? 1 : -1);
+        evals[0] += ForceKingToCornerEndgame(enemyEndgameWeight, true);
+        evals[1] += ForceKingToCornerEndgame(enemyEndgameWeight, false);
+
+        //evals[0] += EvaluatePiecePositions(true);
+        //evals[1] += EvaluatePiecePositions(false);
+
+        // First part of the equasion is always relative between black and white. There is not "absolute drift"
+        // Second part of the equasion introduces an absolute drift towards the endgame
+        int eval = evals[0] - evals[1] + (int)(0 * enemyEndgameWeight);
+
+        return eval * (isWhite ? 1 : -1);
     }
 
     int EvaluatePiecePositions(bool isWhite)
@@ -219,35 +228,25 @@ public class MyBot : IChessBot
         return eval;
     }
 
-    int ForceKingToCornerEndgame(int enemyMaterial, int friendlyMaterial, bool isWhite)
+    int ForceKingToCornerEndgame(float enemyEndgameWeight, bool isWhite)
     {
         int eval = 0;
-
-        // Endgame starts very early (it still fades in) -> chess comes out early and hyperaggressive.
-        //0-1 -> more the fewer material the enemy has
-        float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 3000);
-
-        //0-1 -> more the more material the enemy has than me
-        float disadvantageReduction = 1 - Math.Min(1, (friendlyMaterial-10000) / ((float)(enemyMaterial-10000)));
-
-        enemyEndgameWeight *= disadvantageReduction;
 
         if (enemyEndgameWeight > 0)
         {
             Square opponentKingSquare = _board.GetKingSquare(!isWhite);
             Square friendlyKingSquare = _board.GetKingSquare(isWhite);
 
-            //0-7?
-            eval += DistanceInSquaresToCenter(opponentKingSquare);
+            eval += DistanceInSquaresToCenter(opponentKingSquare) * 20;
 
             int dstBetweenKingsFile = Math.Abs(friendlyKingSquare.File - opponentKingSquare.File);
             int dstBetweenKingsRank = Math.Abs(friendlyKingSquare.Rank - opponentKingSquare.Rank);
             int dstBetweenKings = dstBetweenKingsFile + dstBetweenKingsRank;
 
-            eval += 14 - dstBetweenKings;
+            eval += (14 - dstBetweenKings) * 20;
         }
 
-        return (int)(eval * 20 * enemyEndgameWeight);
+        return (int)(eval * enemyEndgameWeight);
     }
 
     public int DistanceInSquaresToCenter(Square square)
