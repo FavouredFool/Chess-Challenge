@@ -2,6 +2,7 @@
 using System;
 using System.Linq;
 
+
 public class MyBot : IChessBot
 {
     const int PositiveInfinity = 9999999;
@@ -15,15 +16,11 @@ public class MyBot : IChessBot
     bool _searchCancelled;
 
     int _currentMaxTimeElapsed;
-    //int _maxTimeElapsed = 850;
+    int _maxTimeElapsed = 850;
     float _timeDepletionThreshold = 0.4f;
 
     Board _board;
     Timer _timer;
-
-    int _searchesPerTurn = 60000;
-
-    int _searchCounter;
 
     Random _random = new();
 
@@ -32,18 +29,18 @@ public class MyBot : IChessBot
         _board = board;
         _timer = timer;
 
-        _searchCounter = 0;
-
         _searchCancelled = false;
         _bestMoveOuterScope = Move.NullMove;
         _bestEvalOuterScope = NegativeInfinity;
 
+        float percentageTimeLeft = _timer.MillisecondsRemaining / 60000f;
+
+        _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
+
+        //Log("MaxTimeElapsed: " + _currentMaxTimeElapsed);
+
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
-            //float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
-
-            //_currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
-
             SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
 
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
@@ -54,9 +51,7 @@ public class MyBot : IChessBot
 
     int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
     {
-        ++_searchCounter;
-
-        if (_searchCounter > _searchesPerTurn) _searchCancelled = true;
+        if (_timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
 
         if (_searchCancelled || _board.IsDraw()) return 0;
 
