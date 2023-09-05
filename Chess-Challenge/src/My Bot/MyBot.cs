@@ -37,8 +37,6 @@ public class MyBot : IChessBot
 
         _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
 
-        //Log("MaxTimeElapsed: " + _currentMaxTimeElapsed);
-
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
             SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
