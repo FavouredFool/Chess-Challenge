@@ -14,7 +14,7 @@ public class MyBot : IChessBot
 
     bool _searchCancelled;
 
-    int _maxTimeElapsed = 850;
+    int _maxTimeElapsed = 150;
     int _timeCeilingMS;
     float _timeDepletionThreshold = 0.4f;
 
@@ -138,16 +138,24 @@ public class MyBot : IChessBot
 
         int[] evals = new[] { 0, 0 };
 
+        int friendlyMaterialIndex = isWhite ? 0 : 1;
+        int enemyMaterialIndex = (friendlyMaterialIndex + 1) % 2;
+
         evals[0] += CountMaterial(true);
         evals[1] += CountMaterial(false);
 
-        evals[0] += ForceKingToCornerEndgameEval(evals[0], evals[1], true);
-        evals[1] += ForceKingToCornerEndgameEval(evals[1], evals[0], false);
+        float enemyEndgameWeight = 1 - Math.Min(1, (evals[enemyMaterialIndex] - 10000) / 2800.0f);
+        float disadvantageReduction = Math.Min(1, (evals[friendlyMaterialIndex] - 10000) / ((float)(evals[enemyMaterialIndex] - 10000)));
+
+        enemyEndgameWeight *= disadvantageReduction;
+
+        evals[0] += ForceKingToCornerEndgameEval(enemyEndgameWeight, true);
+        evals[1] += ForceKingToCornerEndgameEval(enemyEndgameWeight, false);
 
         evals[0] += EvaluatePiecePositions(true);
         evals[1] += EvaluatePiecePositions(false);
 
-        return (evals[0] - evals[1]) * (isWhite ? 1 : -1);
+        return evals[friendlyMaterialIndex] - evals[enemyMaterialIndex];
     }
 
     int EvaluatePiecePositions(bool isWhite)
@@ -163,7 +171,7 @@ public class MyBot : IChessBot
             int pawnRank = isWhite ? pawnSquare.Rank : 7 - pawnSquare.Rank;
             int distFromMiddle = Math.Max(3 - pawnSquare.File, pawnSquare.File - 4);
 
-            eval += pawnRank * (6 - distFromMiddle);
+            eval += (int) (pawnRank * (6 - distFromMiddle / 4f));
         }
 
         foreach (Piece piece in _board.GetPieceList(PieceType.Knight, isWhite).Concat(_board.GetPieceList(PieceType.Bishop, isWhite)).Concat(_board.GetPieceList(PieceType.Queen, isWhite)).Concat(_board.GetPieceList(PieceType.Rook, isWhite)))
@@ -174,20 +182,15 @@ public class MyBot : IChessBot
         return eval;
     }
 
-    int ForceKingToCornerEndgameEval(int whiteMaterial, int blackMaterial, bool isWhite)
+    int ForceKingToCornerEndgameEval(float enemyEndgameWeight, bool isWhite)
     {
         int eval = 0;
 
-        int enemyMaterial = isWhite ? blackMaterial : whiteMaterial;
-        int friendlyMaterial = isWhite ? whiteMaterial : blackMaterial;
-
-        float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 2500.0f);
-
-        if (friendlyMaterial > enemyMaterial && enemyEndgameWeight > 0)
+        if (enemyEndgameWeight > 0)
         {
             Square opponentKingSquare = _board.GetKingSquare(!isWhite);
 
-            eval += SquareDistanceToCenter(opponentKingSquare);
+            eval += SquareDistanceToCenter(opponentKingSquare) * 10;
 
             Square friendlyKingSquare = _board.GetKingSquare(isWhite);
 
@@ -195,10 +198,10 @@ public class MyBot : IChessBot
             int dstBetweenKingsRank = Math.Abs(friendlyKingSquare.Rank - opponentKingSquare.Rank);
             int dstBetweenKings = dstBetweenKingsFile + dstBetweenKingsRank;
 
-            eval += 14 - dstBetweenKings;
+            eval += (14 - dstBetweenKings) * 6;
         }
 
-        return (int)(eval * 20 * enemyEndgameWeight);
+        return (int)(eval * enemyEndgameWeight);
     }
 
     public int SquareDistanceToCenter(Square square)

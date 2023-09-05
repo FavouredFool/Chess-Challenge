@@ -19,8 +19,6 @@ namespace ChessChallenge.Example
 
     public class EvilBot : IChessBot
     {
-        private string _thanksForAllYourAwesomeWorkSeb = " <3 ";
-
         const int PositiveInfinity = 9999999;
         const int NegativeInfinity = -PositiveInfinity;
 
@@ -31,8 +29,8 @@ namespace ChessChallenge.Example
 
         bool _searchCancelled;
 
-        int _currentMaxTimeElapsed;
-        int _maxTimeElapsed = 850;
+        int _maxTimeElapsed = 150;
+        int _timeCeilingMS;
         float _timeDepletionThreshold = 0.4f;
 
         Board _board;
@@ -47,13 +45,17 @@ namespace ChessChallenge.Example
 
             _searchCancelled = false;
             _bestMoveOuterScope = Move.NullMove;
+            _bestEvalOuterScope = NegativeInfinity;
+
+            int remainingMS = _timer.MillisecondsRemaining;
+
+            float percentageTimeLeft = remainingMS / 60000f;
+            int dynamicMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
+
+            _timeCeilingMS = remainingMS - dynamicMaxTimeElapsed;
 
             for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
             {
-                float percentageTimeLeft = timer.MillisecondsRemaining / 60000f;
-
-                _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
-
                 SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
 
                 if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
@@ -64,7 +66,7 @@ namespace ChessChallenge.Example
 
         int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
         {
-            if (_bestMoveOuterScope != Move.NullMove && _timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+            if (_timer.MillisecondsRemaining < _timeCeilingMS) _searchCancelled = true;
 
             if (_searchCancelled || _board.IsDraw()) return 0;
 
@@ -88,7 +90,7 @@ namespace ChessChallenge.Example
                 if (captureEval > alpha) alpha = captureEval;
             }
 
-            // Randomize so that moves with same eval are not deterministic
+            // Shuffle so that moves with same eval are not deterministic
             movesToSearch = movesToSearch.OrderBy(e => _random.Next()).ToArray();
             Array.Sort(movesToSearch, (x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
 
@@ -151,16 +153,24 @@ namespace ChessChallenge.Example
 
             int[] evals = new[] { 0, 0 };
 
+            int friendlyMaterialIndex = isWhite ? 0 : 1;
+            int enemyMaterialIndex = (friendlyMaterialIndex + 1) % 2;
+
             evals[0] += CountMaterial(true);
             evals[1] += CountMaterial(false);
 
-            evals[0] += ForceKingToCornerEndgameEval(evals[0], evals[1], true);
-            evals[1] += ForceKingToCornerEndgameEval(evals[1], evals[0], false);
+            float enemyEndgameWeight = 1 - Math.Min(1, (evals[enemyMaterialIndex] - 10000) / 2800.0f);
+            float disadvantageReduction = Math.Min(1, (evals[friendlyMaterialIndex] - 10000) / ((float)(evals[enemyMaterialIndex] - 10000)));
+
+            enemyEndgameWeight *= disadvantageReduction;
+
+            evals[0] += ForceKingToCornerEndgameEval(enemyEndgameWeight, true);
+            evals[1] += ForceKingToCornerEndgameEval(enemyEndgameWeight, false);
 
             evals[0] += EvaluatePiecePositions(true);
             evals[1] += EvaluatePiecePositions(false);
 
-            return (evals[0] - evals[1]) * (isWhite ? 1 : -1);
+            return evals[friendlyMaterialIndex] - evals[enemyMaterialIndex];
         }
 
         int EvaluatePiecePositions(bool isWhite)
@@ -176,7 +186,7 @@ namespace ChessChallenge.Example
                 int pawnRank = isWhite ? pawnSquare.Rank : 7 - pawnSquare.Rank;
                 int distFromMiddle = Math.Max(3 - pawnSquare.File, pawnSquare.File - 4);
 
-                eval += pawnRank * (6 - distFromMiddle);
+                eval += (int)(pawnRank * (6 - distFromMiddle / 4f));
             }
 
             foreach (Piece piece in _board.GetPieceList(PieceType.Knight, isWhite).Concat(_board.GetPieceList(PieceType.Bishop, isWhite)).Concat(_board.GetPieceList(PieceType.Queen, isWhite)).Concat(_board.GetPieceList(PieceType.Rook, isWhite)))
@@ -187,20 +197,15 @@ namespace ChessChallenge.Example
             return eval;
         }
 
-        int ForceKingToCornerEndgameEval(int whiteMaterial, int blackMaterial, bool isWhite)
+        int ForceKingToCornerEndgameEval(float enemyEndgameWeight, bool isWhite)
         {
             int eval = 0;
 
-            int enemyMaterial = isWhite ? blackMaterial : whiteMaterial;
-            int friendlyMaterial = isWhite ? whiteMaterial : blackMaterial;
-
-            float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 2500.0f);
-
-            if (friendlyMaterial > enemyMaterial + _pieceValues[1] * 2 && enemyEndgameWeight > 0)
+            if (enemyEndgameWeight > 0)
             {
                 Square opponentKingSquare = _board.GetKingSquare(!isWhite);
 
-                eval += SquareDistanceToCenter(opponentKingSquare); ;
+                eval += SquareDistanceToCenter(opponentKingSquare) * 10;
 
                 Square friendlyKingSquare = _board.GetKingSquare(isWhite);
 
@@ -208,10 +213,10 @@ namespace ChessChallenge.Example
                 int dstBetweenKingsRank = Math.Abs(friendlyKingSquare.Rank - opponentKingSquare.Rank);
                 int dstBetweenKings = dstBetweenKingsFile + dstBetweenKingsRank;
 
-                eval += 14 - dstBetweenKings;
+                eval += (14 - dstBetweenKings) * 6;
             }
 
-            return (int)(eval * 20 * enemyEndgameWeight);
+            return (int)(eval * enemyEndgameWeight);
         }
 
         public int SquareDistanceToCenter(Square square)
@@ -226,19 +231,16 @@ namespace ChessChallenge.Example
         int CountMaterial(bool isWhite)
         {
             int material = 0;
-            int offset = isWhite ? 0 : 6;
 
             PieceList[] allPieceLists = _board.GetAllPieceLists();
             for (int i = 0; i < 6; i++)
             {
-                PieceList pieceList = allPieceLists[i + offset];
+                PieceList pieceList = allPieceLists[i + (isWhite ? 0 : 6)];
                 material += pieceList.Count * _pieceValues[i + 1];
             }
 
             return material;
         }
     }
-
-
 
 }
