@@ -2,7 +2,6 @@
 using System;
 using System.Linq;
 
-
 public class MyBot : IChessBot
 {
     const int PositiveInfinity = 9999999;
@@ -15,8 +14,8 @@ public class MyBot : IChessBot
 
     bool _searchCancelled;
 
-    int _currentMaxTimeElapsed;
     int _maxTimeElapsed = 850;
+    int _timeCeilingMS;
     float _timeDepletionThreshold = 0.4f;
 
     Board _board;
@@ -33,9 +32,12 @@ public class MyBot : IChessBot
         _bestMoveOuterScope = Move.NullMove;
         _bestEvalOuterScope = NegativeInfinity;
 
-        float percentageTimeLeft = _timer.MillisecondsRemaining / 60000f;
+        int remainingMS = _timer.MillisecondsRemaining;
 
-        _currentMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
+        float percentageTimeLeft = remainingMS / 60000f;
+        int dynamicMaxTimeElapsed = (percentageTimeLeft >= _timeDepletionThreshold) ? _maxTimeElapsed : (int)(percentageTimeLeft * (_maxTimeElapsed / _timeDepletionThreshold));
+
+        _timeCeilingMS = remainingMS - dynamicMaxTimeElapsed;
 
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
@@ -49,7 +51,7 @@ public class MyBot : IChessBot
 
     int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
     {
-        if (_timer.MillisecondsElapsedThisTurn > _currentMaxTimeElapsed) _searchCancelled = true;
+        if (_timer.MillisecondsRemaining < _timeCeilingMS) _searchCancelled = true;
 
         if (_searchCancelled || _board.IsDraw()) return 0;
 
@@ -181,11 +183,11 @@ public class MyBot : IChessBot
 
         float enemyEndgameWeight = 1 - Math.Min(1, (enemyMaterial - 10000) / 2500.0f);
 
-        if (friendlyMaterial > enemyMaterial + _pieceValues[1] * 2 && enemyEndgameWeight > 0)
+        if (friendlyMaterial > enemyMaterial && enemyEndgameWeight > 0)
         {
             Square opponentKingSquare = _board.GetKingSquare(!isWhite);
 
-            eval += SquareDistanceToCenter(opponentKingSquare); ;
+            eval += SquareDistanceToCenter(opponentKingSquare);
 
             Square friendlyKingSquare = _board.GetKingSquare(isWhite);
 
@@ -211,12 +213,11 @@ public class MyBot : IChessBot
     int CountMaterial(bool isWhite)
     {
         int material = 0;
-        int offset = isWhite ? 0 : 6;
 
         PieceList[] allPieceLists = _board.GetAllPieceLists();
         for (int i = 0; i < 6; i++)
         {
-            PieceList pieceList = allPieceLists[i + offset];
+            PieceList pieceList = allPieceLists[i + (isWhite ? 0 : 6)];
             material += pieceList.Count * _pieceValues[i + 1];
         }
 
