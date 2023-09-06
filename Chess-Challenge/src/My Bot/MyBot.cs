@@ -1,8 +1,6 @@
 ﻿using ChessChallenge.API;
 using System;
 using System.Linq;
-using System.Xml.Schema;
-using static ChessChallenge.Application.ConsoleHelper;
 
 public class MyBot : IChessBot
 {
@@ -15,28 +13,31 @@ public class MyBot : IChessBot
      * An example:
      * A marathon runner is really close to finishing her race but she's also reaaaally groggy. She is two meters away from the finish line, but due to her exhaustion every step that she takes is half as far as her last one.
      * Her first step is a strong 1 meters far. The following only 0.5 meters. The one after that 0.25 meters, etcetera etcetera.
-     * After how many steps will she reach the goal? Because this is all very philosophical, we need to understand that our marathon runner is actually just a line, or a point - she has no width that would trigger the finish line by proximity.
+     * After how many steps will she reach the goal? Because this is all very philosophical, we need to understand that our marathon runner is actually just a vertical line, or a point - she has no width that would trigger the finish line by proximity.
      * She should reach the goal after an infinite amount of steps, right? But damn, dat's alotta steps.
      * 
      * Vsauce has a great video about this: https://www.youtube.com/watch?v=ffUnNaQTfZE
+     * 
      * 
      * -- What do the bot do? --
      * The bot has *terrible* time-management-skills.
      * It treats its time like a Supertask in that it always takes half its remaining time for its turn.
      * This might not seem like a smart strategy (it aint), but I can assure you that the bot will use the first 30 seconds to calculate a *banger* opening move.
      * 
-     * I *tried* to make it as competitive as possible. It's hyper-aggressive, so it can use the first moves that still search a few iterations deep to make some impact on the board.
+     * I tried to make it at least a little competitive. It's very aggressive, so it can use the first moves that still search a few iterations deep to make some impact on the board.
      * It's especially entertaining to see it play against itself. If you have the patience to wait through their respective first moves, the way they ramp up their speed is quite satisfying to watch.
      * 
      * 
      * -- What are its limitations? --
      * There is an unavoidable time-loss between the time measured at the end of a turn and the time measured at the start of the next turn.
-     * I calculated this delta cost (_averageDeltaCostBetweenTurnsMS) to be around 16ms on my machine, which is unfortunately quite a lot.
-     * To combat this, I included a puffer (_pufferMS) for 64 turns (_estimatedMaxTotalMoves) which decreases every turn and should help to remove the delta-cost from the equasion.
+     * I measured this delta cost (_averageDeltaCostBetweenTurnsMS) to be around 16ms on my machine, which is unfortunately quite a lot.
+     * To combat this, I included a buffer (_bufferMS) for 128 turns (_estimatedMaxTotalMoves) which decreases every turn and should help to remove the delta-cost from the equasion.
      * 
-     * Additionally, computers are not cool enough to be infinitely fast (smh), which is why even without this puffer, we'd *potentially* hit some time constraints.
-     *  That should be enough to cover the 64 rounds. Any more than 64 and the puffer will be our bots detriment anyway.
+     * Additionally, computers are not cool enough to be infinitely fast, which is why - even without this buffer - we'd hit some time constraints eventually, to the point where even just assigning a random move would take too long.
+     * But the computer should be quick enough to cover the 128 turns, even through the moves will get progressively worse. Any more than 128 turns and the buffer will be our bots detriment anyway.
      */
+
+    const string ThanksForAllYourWorkSeb = " <3 ";
 
     const int PositiveInfinity = 9999999;
     const int NegativeInfinity = -PositiveInfinity;
@@ -52,22 +53,21 @@ public class MyBot : IChessBot
     Board _board;
     Timer _timer;
 
-    // While I measured a delta-cost of 16ms (see comment above), I'ma double it (and give it to the next person) so weaker computers can still keep up (as I am not sure about the origin of the delta-cost).
-    const int _averageDeltaCostBetweenTurnsMS = 16*2 * 0;
-    const int _estimatedMaxTotalMoves = 64;
+    // It might be a little risky to just use the MS value that I measured on my machine, but increasing it a significant amount would make the buffer seem really big on the timer and I think that takes part of the fun out of the concept. It's a risk I'm willing to take!
+    int _averageDeltaCostBetweenTurnsMS = 16;
+    int _estimatedMaxTotalMoves = 128;
 
     // The found move needs to be better than alpha + _evalJitter. Without this, the bot would move quite deterministic. This way the moves get shuffled and the move that gets picked first has a higher chance of staying.
-    const int _evalJitter = 25;
+    int _evalJitter = 15;
 
     int _timeCeilingMS;
-    int _pufferMS;
+    int _bufferMS;
     int _turnCounter = 0;
 
     Random _random = new();
 
     public Move Think(Board board, Timer timer)
     {
-        Log("Turn: " + _turnCounter);
         _board = board;
         _timer = timer;
 
@@ -76,31 +76,26 @@ public class MyBot : IChessBot
         _bestEvalOuterScope = NegativeInfinity;
         _bestMoveOuterScope = moves[_random.Next(moves.Length)];
 
-        //_timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
-        _timeCeilingMS = _timer.MillisecondsRemaining - 64;
-        _pufferMS = Math.Max((_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS, 0);
+        _timeCeilingMS = (int)Math.Ceiling(_timer.MillisecondsRemaining * 0.5);
+        _bufferMS = Math.Max((_estimatedMaxTotalMoves - _turnCounter) * _averageDeltaCostBetweenTurnsMS, 0);
 
         for (int searchDepth = 1; searchDepth < int.MaxValue; searchDepth++)
         {
             SearchMovesRecursive(0, searchDepth, 0, NegativeInfinity, PositiveInfinity, false);
 
-            Log("Depth: " + searchDepth + " Eval: " + _bestEvalOuterScope);
-
             if (_bestEvalOuterScope > PositiveInfinity - 50000 || _searchCancelled) break;
         }
 
-        // I need to include some waiting here to make sure no turn is ended early when the bot finds mate early.
+        // I need to include some waiting here to make sure no turn is ended early (this would happen when the bot finds mate and stops its search).
+        while (_timer.MillisecondsRemaining - _bufferMS > _timeCeilingMS){ /* exist */ }
 
-        while (_timer.MillisecondsRemaining - _pufferMS > _timeCeilingMS){ /* exist */ }
-
-        
         _turnCounter++;
         return _bestMoveOuterScope;
     }
 
     int SearchMovesRecursive(int currentDepth, int iterationDepth, int numExtensions, int alpha, int beta, bool capturesOnly)
     {
-        if (_timer.MillisecondsRemaining - _pufferMS <= _timeCeilingMS) _searchCancelled = true;
+        if (_timer.MillisecondsRemaining - _bufferMS <= _timeCeilingMS) _searchCancelled = true;
 
         if (_searchCancelled || _board.IsDraw()) return 0;
 
@@ -124,7 +119,7 @@ public class MyBot : IChessBot
             if (captureEval > alpha) alpha = captureEval;
         }
 
-        // Shuffle so that moves with same eval are not deterministic -> This might be completely useless if the eval is precise. How do i shuffle then? -> threshold for how much higher a new eval needs to be than the active alpha in search?
+        // Shuffle so that moves with similar (see _evalJitter) eval are not deterministic.
         movesToSearch = movesToSearch.OrderBy(e => _random.Next()).ToArray();
         Array.Sort(movesToSearch, (x, y) => Math.Sign(MoveOrderCalculator(currentDepth, y) - MoveOrderCalculator(currentDepth, x)));
 
@@ -172,8 +167,6 @@ public class MyBot : IChessBot
 
         if (move.IsPromotion) moveScoreGuess += 30000 + _pieceValues[(int)move.PromotionPieceType];
 
-        if (_board.SquareIsAttackedByOpponent(move.TargetSquare)) moveScoreGuess += -1000 - _pieceValues[(int)move.MovePieceType];
-
         return moveScoreGuess;
     }
 
@@ -203,17 +196,14 @@ public class MyBot : IChessBot
         evals[0] += EvaluatePiecePositions(enemyEndgameWeight, true);
         evals[1] += EvaluatePiecePositions(enemyEndgameWeight, false);
 
-        // First part of the equasion is always relative between black and white. There is not "absolute drift"
-        // Second part of the equasion introduces an absolute drift towards the endgame so the 64 moves are not exceeded
-
-        return (evals[friendlyMaterialIndex] - evals[enemyMaterialIndex]) + (int)(enemyEndgameWeight * _turnCounter * 32);
+        return (evals[friendlyMaterialIndex] - evals[enemyMaterialIndex]);
     }
     
     int EvaluatePiecePositions(float endgameWeight, bool isWhite)
     {
         int eval = 0;
 
-        // push all pieces into the enemy as fast as possible!
+        // push all pieces into the enemy!
         PieceList[] pieceLists = _board.GetAllPieceLists();
         for (int i = 0; i < 6; i++)
         {
@@ -234,11 +224,12 @@ public class MyBot : IChessBot
                     eval += _passedPawnBonuses[rank];
                 }
                 
-                eval += (int)(rank * (8 - distFromMiddle) * 0.5);
+                eval += rank * (5 - distFromMiddle);
             }
         }
 
-        return eval * (1-(int)(endgameWeight));
+        // reduce the value of pushing in the endgame
+        return eval * (1-(int)endgameWeight);
     }
     
 
